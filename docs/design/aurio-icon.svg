@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <title>Aurio</title>
+  <desc>A warm white A with an audio waveform through its center on a plum background.</desc>
+  <defs>
+    <radialGradient id="background" gradientUnits="userSpaceOnUse" cx="40" cy="20" r="85">
+      <stop offset="0" stop-color="#AA455B"/>
+      <stop offset=".55" stop-color="#632C47"/>
+      <stop offset="1" stop-color="#281C33"/>
+    </radialGradient>
+  </defs>
+  <path fill="url(#background)" d="M0,0H108V108H0Z"/>
+  <path fill="none" stroke="#FFF3E6" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"
+        d="M34,74 L49,36 C51,31 57,31 59,36 L74,74 M39,61 H45 C49,61 50,65 54,65 C60,65 60,53 67,53 H71"/>
+</svg>

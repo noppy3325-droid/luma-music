@@ -1,0 +1,29 @@
+[
+  {
+    "File": "noto_sans_jp_bold.otf",
+    "Weight": 700,
+    "Variable": false,
+    "Family": "Noto Sans JP",
+    "Style": "Bold",
+    "Version": "Version 2.004;hotconv 1.0.118;makeotfexe 2.5.65603",
+    "Copyright": "© 2014-2021 Adobe (http://www.adobe.com/)."
+  },
+  {
+    "File": "noto_sans_jp_medium.otf",
+    "Weight": 500,
+    "Variable": false,
+    "Family": "Noto Sans JP Medium",
+    "Style": "Regular",
+    "Version": "Version 2.004;hotconv 1.0.118;makeotfexe 2.5.65603",
+    "Copyright": "© 2014-2021 Adobe (http://www.adobe.com/)."
+  },
+  {
+    "File": "noto_sans_jp_regular.otf",
+    "Weight": 400,
+    "Variable": false,
+    "Family": "Noto Sans JP",
+    "Style": "Regular",
+    "Version": "Version 2.004;hotconv 1.0.118;makeotfexe 2.5.65603",
+    "Copyright": "© 2014-2021 Adobe (http://www.adobe.com/)."
+  }
+]

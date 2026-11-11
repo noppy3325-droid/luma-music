@@ -1,0 +1,1 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application><provider android:name="jp.noppy.lumamusic.BenchmarkProvider" android:authorities="jp.noppy.lumamusic.test.bench" android:exported="true" android:grantUriPermissions="true" /></application></manifest>
