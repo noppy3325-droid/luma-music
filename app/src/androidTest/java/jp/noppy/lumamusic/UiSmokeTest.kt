@@ -150,6 +150,7 @@ class UiSmokeTest {
         toY: Float,
         durationMs: Long = 300,
         frame: String? = null,
+        cancel: Boolean = false,
     ) {
         val view = activity.window.decorView
         val down = SystemClock.uptimeMillis()
@@ -166,7 +167,7 @@ class UiSmokeTest {
             dispatch(MotionEvent.ACTION_MOVE, step / 10f)
             if (step == 5 && frame != null) screenshot(frame)
         }
-        dispatch(MotionEvent.ACTION_UP, 1f)
+        dispatch(if (cancel) MotionEvent.ACTION_CANCEL else MotionEvent.ACTION_UP, 1f)
     }
 
     private fun tabSelected(label: String): Boolean = nodes().any { node ->
@@ -216,7 +217,7 @@ class UiSmokeTest {
             val artist = if (index == 47) "Aurio Studio feat. 月のあいだ・静かな海" else "Aurio Studio"
             Track(uri = uri, title = title, artist = artist, album = names[index % 6], albumArtist = "Aurio Studio",
                 duration = 20000, mime = "audio/wav", sampleRate = rate, bitDepth = 16, channels = 2, artwork = art[index % 6], artworkThumbnail = art[index % 6],
-                embeddedLyrics = "[00:00.00]静かな夜に\n[00:05.00]星をつないで\n[00:10.00]明日へ歩く", modified = wave.lastModified(), added = start + index,
+                embeddedLyrics = "[00:00.00]静かな夜に\n[00:05.00]星をつないで\n[00:10.00]明日へ歩く", modified = wave.lastModified(), added = if (index == 0) Long.MIN_VALUE else start + index,
                 size = wave.length(), metadataState = "READY", detailState = "READY")
         }
         return wave to tracks
@@ -269,6 +270,7 @@ class UiSmokeTest {
             val fixtureQueue = tracks.takeLast(3).map(Track::mediaItem)
             main {
                 player.setMediaItems(fixtureQueue, fixtureQueue.lastIndex, 0)
+                player.shuffleModeEnabled = false
                 player.repeatMode = Player.REPEAT_MODE_ONE
                 player.prepare()
                 player.play()
@@ -280,11 +282,71 @@ class UiSmokeTest {
                 textPresent(top.title)
             }
             screenshot("01-library-light")
+            val lastTrack = tracks.first()
+            val lastRowIndex = app.library.tracks.first().size // Track count header occupies item zero.
+            val scrollToPosition = AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_TO_POSITION.id
+            fun scrollToLibraryIndex(index: Int) = verticalScroller()?.performAction(scrollToPosition, Bundle().apply {
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_ROW_INT, index)
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_COLUMN_INT, 0)
+            }) == true
+            if (!scrollToLibraryIndex(lastRowIndex)) {
+                for (page in 0 until 45) {
+                    if (verticalScroller()?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) != true) break
+                    Thread.sleep(270)
+                }
+            }
+            eventually("final library track is visible") { textPresent(lastTrack.title) }
+            fun bounds(node: AccessibilityNodeInfo) = android.graphics.Rect().also(node::getBoundsInScreen)
+            val bottomTrack = nodes().first { it.text?.toString() == lastTrack.title }
+            val bottomMenu = nodes().filter { it.contentDescription?.toString() == "曲の操作" }
+                .minByOrNull { kotlin.math.abs(bounds(it).centerY() - bounds(bottomTrack).centerY()) }
+                ?: error("Final track overflow is not visible")
+            val miniArt = nodes().filter { it.contentDescription?.toString() == "アルバムアート: ${top.title}" }
+                .maxByOrNull { bounds(it).centerY() }
+            if (miniArt != null) {
+                val clearance = (10 * context.resources.displayMetrics.density).toInt()
+                assertTrue("final row overflow sits above the mini player", bounds(bottomMenu).bottom <= bounds(miniArt).top - clearance)
+            }
+            screenshot("22-final-library-row")
+            val menuPoint = bounds(bottomMenu)
+            val decor = activity.window.decorView
+            val decorOrigin = IntArray(2)
+            main { decor.getLocationOnScreen(decorOrigin) }
+            val tapTime = SystemClock.uptimeMillis()
+            for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+                val event = MotionEvent.obtain(tapTime, SystemClock.uptimeMillis(), action,
+                    (menuPoint.centerX() - decorOrigin[0]).toFloat(), (menuPoint.centerY() - decorOrigin[1]).toFloat(), 0)
+                event.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+                try { main { activity.dispatchTouchEvent(event) } } finally { event.recycle() }
+            }
+            eventually("final row menu actions are available") { textPresent("次に再生") }
+            assertTrue(instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+            eventually("final row menu is dismissed") { !textPresent("次に再生") && textPresent(lastTrack.title) }
+            if (!scrollToLibraryIndex(0)) {
+                for (page in 0 until 45) {
+                    if (verticalScroller()?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD) != true) break
+                    Thread.sleep(270)
+                }
+            }
+            eventually("list returns to fixture library") { textPresent("曲の並べ替え") }
             assertTrue("library scroll dispatches", verticalScroller()?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) == true)
             Thread.sleep(800)
             screenshot("02-library-scroll-glass")
 
             frameStats(reset = true)
+            val navigationBounds = android.graphics.Rect()
+            val libraryTab = nodes().filter { it.text?.toString() == "ライブラリ" || it.contentDescription?.toString() == "ライブラリ" }
+                .maxByOrNull { node ->
+                    val bounds = android.graphics.Rect()
+                    node.getBoundsInScreen(bounds)
+                    bounds.centerY()
+                } ?: error("Library tab is not visible")
+            libraryTab.getBoundsInScreen(navigationBounds)
+            val navigationY = navigationBounds.centerY().toFloat() / activity.window.decorView.height
+            swipe(activity, .72f, navigationY, .29f, navigationY, 500, "19-bottom-navigation-drag")
+            eventually("dragging the bottom navigation moves to search") { tabSelected("検索") }
+            swipe(activity, .22f, navigationY, .65f, navigationY, 500)
+            eventually("dragging the bottom navigation back restores library") { tabSelected("ライブラリ") }
             swipe(activity, .82f, .51f, .17f, .51f, frame = "15-tab-drag")
             eventually("search tab settles after horizontal swipe") { tabSelected("検索") }
             eventually("search input") { nodes().any { it.isEditable } }
@@ -309,9 +371,41 @@ class UiSmokeTest {
             miniTitle.getBoundsInScreen(miniBounds)
             val miniX = miniBounds.centerX().toFloat() / window.width
             val miniY = miniBounds.centerY().toFloat() / window.height
+            fun playingItem(id: String): Boolean {
+                var matches = false
+                main { matches = player.currentMediaItem?.mediaId == id && player.isPlaying }
+                return matches
+            }
+            main { player.seekTo(7000) }
+            swipe(activity, .29f, miniY, .57f, miniY, 320, "20-mini-previous-drag")
+            eventually("right swipe goes to the previous item while Repeat ONE is on") {
+                playingItem(fixtureQueue[1].mediaId) && tabSelected("ライブラリ")
+            }
+            swipe(activity, .52f, miniY, .22f, miniY, 300, cancel = true)
+            Thread.sleep(480)
+            assertTrue("cancelled horizontal swipe leaves playback on the current item", playingItem(fixtureQueue[1].mediaId))
+            swipe(activity, .52f, miniY, .22f, miniY, 300, "21-mini-next-drag")
+            eventually("left swipe moves exactly one item while Repeat ONE is on") {
+                playingItem(top.uri) && tabSelected("ライブラリ")
+            }
+            Thread.sleep(650)
+            swipe(activity, .52f, miniY, .22f, miniY, 280)
+            Thread.sleep(450)
+            assertTrue("no next item at the queue boundary", playingItem(top.uri))
             swipe(activity, miniX, miniY, miniX, miniY - .09f, 650, "16-player-drag-cancel")
             Thread.sleep(700)
             assertFalse("short drag restores collapsed mini-player", textPresent("プレイヤーを閉じる"))
+            swipe(activity, miniX, miniY, miniX, miniY - .42f, 360, cancel = true)
+            Thread.sleep(500)
+            eventually("a system-cancelled drag restores the mini player") {
+                !textPresent("プレイヤーを閉じる") && tabSelected("ライブラリ")
+            }
+            swipe(activity, miniX, miniY, miniX, miniY - .46f, 320)
+            swipe(activity, .5f, .54f, .5f, .88f, 280)
+            Thread.sleep(500)
+            eventually("the moving player can be grabbed and reversed") {
+                !textPresent("プレイヤーを閉じる") && tabSelected("ライブラリ")
+            }
             swipe(activity, miniX, miniY, miniX, miniY - .48f, 450, "17-player-drag-open")
             eventually("player route") { textPresent("プレイヤーを閉じる") }
             eventually("fixture plays and advances") { var result = false; main { result = player.currentMediaItem?.mediaId == top.uri && player.isPlaying && player.currentPosition > 100 }; result }
@@ -321,6 +415,19 @@ class UiSmokeTest {
             val seek = nodes().first { it.contentDescription?.toString() == "再生位置" }
             assertTrue("accessible seek dispatches", seek.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id, Bundle().apply { putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, 5000f) }))
             eventually("seek changes actual player") { var result = false; main { result = player.currentPosition in 4500L..6000L }; result }
+            click("シャッフル")
+            main {
+                assertTrue("shuffle action reaches MediaSession", player.shuffleModeEnabled)
+                assertEquals(top.uri, player.currentMediaItem?.mediaId)
+                assertTrue(player.currentPosition in 4500L..6000L)
+                assertEquals(Player.REPEAT_MODE_ONE, player.repeatMode)
+            }
+            click("シャッフル")
+            main { assertFalse(player.shuffleModeEnabled) }
+            for (mode in listOf(Player.REPEAT_MODE_OFF, Player.REPEAT_MODE_ALL, Player.REPEAT_MODE_ONE)) {
+                click("リピート切替")
+                main { assertEquals(mode, player.repeatMode) }
+            }
             screenshot("04-player-light")
             click("キュー")
             eventually("queue sheet") { textPresent("次はこちら") }
@@ -345,7 +452,7 @@ class UiSmokeTest {
             repeat(6) { if (!textPresent("閉じる")) { verticalScroller()?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD); Thread.sleep(300) } }
             click("閉じる")
             eventually("player returns") { textPresent("プレイヤーを閉じる") }
-            swipe(activity, .5f, .22f, .5f, .70f, 450, "18-player-drag-close")
+            swipe(activity, .035f, .22f, .035f, .70f, 450, "18-player-drag-close")
             eventually("player collapses to the selected tab") { !textPresent("プレイヤーを閉じる") && tabSelected("ライブラリ") }
             main {
                 assertTrue("Playback continues as the sheet closes", player.isPlaying)

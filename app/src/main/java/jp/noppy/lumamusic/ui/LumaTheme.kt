@@ -13,14 +13,24 @@ import androidx.compose.ui.text.font.FontStyle
 import jp.noppy.lumamusic.R
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.kyant.backdrop.highlight.Highlight
 
 object LumaColors {
     val Accent = Color(0xFFC43B5A)
     val Light = Color(0xFFF7F7F9)
     val Dark = Color(0xFF121215)
 }
-object LumaSpacing { val Small = 8.dp; val Medium = 16.dp; val Page = 24.dp; val Section = 32.dp; val FloatingBottom = 196.dp }
+object LumaSpacing { val Small = 8.dp; val Medium = 16.dp; val Page = 24.dp; val Section = 32.dp }
 object LumaShapes { val Artwork = RoundedCornerShape(14.dp); val Search = RoundedCornerShape(14.dp); val Pill = RoundedCornerShape(50) }
+internal object LumaDock {
+    val HorizontalMargin = 16.dp
+    val BottomMargin = 12.dp
+    val PanelGap = 10.dp
+    val ListClearance = 8.dp
+    const val MiniRadius = 24
+    const val NavigationRadius = 32
+    val GlassHighlight = Highlight.Ambient.copy(alpha = .52f)
+}
 // Fixed official faces avoid OEMs ignoring the weight axis of a variable resource font.
 val AurioFontFamily = FontFamily(
     Font(R.font.noto_sans_jp_regular, FontWeight.Normal, FontStyle.Normal),

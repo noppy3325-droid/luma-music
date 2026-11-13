@@ -3,6 +3,7 @@ package jp.noppy.lumamusic.ui
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -13,10 +14,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.media3.common.Player
 import jp.noppy.lumamusic.core.parseLrc
 import jp.noppy.lumamusic.data.Track
 import jp.noppy.lumamusic.playback.PlaybackUi
@@ -43,6 +49,7 @@ internal fun PlayerScreen(
     val album = track?.album.orEmpty().takeUnless {
         it.isBlank() || it == "不明なアルバム" || it.equals("Unknown Album", true) || it.equals("Unknown", true)
     }.orEmpty()
+    val outputState by vm.output.collectAsStateWithLifecycle()
     var menu by rememberSaveable { mutableStateOf(false) }
     val playerColors = remember {
         darkColorScheme(
@@ -62,7 +69,7 @@ internal fun PlayerScreen(
                 CompositionLocalProvider(LocalContentColor provides Color.White) {
                     BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
                         val compact = wide || maxHeight < 710.dp
-                        val compactDetailsHeight = maxHeight.takeIf { it < 570.dp }?.times(.66f)
+                        val compactDetailsHeight = maxHeight * if (maxHeight < 570.dp) .78f else .72f
                         val chrome = Modifier.graphicsLayer {
                             val progress = sheet.progress
                             alpha = ((progress - .22f) / .78f).coerceIn(0f, 1f)
@@ -77,28 +84,18 @@ internal fun PlayerScreen(
                                 else -> Box(modifier.playerSheetDrag(sheet, opening = false))
                             }
                         }
-                        val header: @Composable () -> Unit = {
-                            Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+                        val header: @Composable (Modifier) -> Unit = { modifier ->
+                            Row(modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(close) { Icon(Icons.Rounded.KeyboardArrowDown, "プレイヤーを閉じる", Modifier.size(30.dp)) }
                                 Box(
-                                    Modifier.weight(1f).fillMaxHeight().playerSheetDrag(sheet, opening = false),
-                                    contentAlignment = Alignment.Center
+                                    Modifier.weight(1f).fillMaxHeight().playerSheetDrag(sheet, opening = false).padding(start = 8.dp),
+                                    contentAlignment = Alignment.CenterStart
                                 ) {
-                                    TrackText(album, style = MaterialTheme.typography.labelMedium, color = Color.White.copy(.88f))
+                                    if (album.isNotEmpty()) TrackText(album, style = MaterialTheme.typography.labelMedium, color = Color.White.copy(.88f))
                                 }
                                 Box {
                                     IconButton({ menu = true }) { Icon(Icons.Rounded.MoreHoriz, "再生メニュー") }
                                     DropdownMenu(menu, { menu = false }) {
-                                        DropdownMenuItem(
-                                            text = { Text(if (playback.shuffle) "シャッフルをオフ" else "シャッフル") },
-                                            leadingIcon = { Icon(Icons.Rounded.Shuffle, null) },
-                                            onClick = { menu = false; vm.playback.shuffle() }
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text(when (playback.repeat) { 1 -> "全曲リピート"; 2 -> "リピートをオフ"; else -> "1曲リピート" }) },
-                                            leadingIcon = { Icon(Icons.Rounded.Repeat, null) },
-                                            onClick = { menu = false; vm.playback.repeat() }
-                                        )
                                         DropdownMenuItem(
                                             text = { Text("横置きスタンバイ") },
                                             leadingIcon = { Icon(Icons.Rounded.ScreenRotation, null) },
@@ -111,11 +108,10 @@ internal fun PlayerScreen(
                         val details: @Composable ColumnScope.() -> Unit = {
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
-                                    TrackText(title, style = if (compact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium)
+                                    TrackText(title, style = if (compact) MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold) else MaterialTheme.typography.headlineMedium)
                                     if (artist.isNotBlank()) {
                                         Spacer(Modifier.height(2.dp))
-                                        val artistStyle = if (compact) MaterialTheme.typography.titleMedium else
-                                            MaterialTheme.typography.titleMedium.copy(fontSize = 20.sp, lineHeight = 26.sp)
+                                        val artistStyle = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleMedium
                                         TrackText(artist, style = artistStyle, color = playerColors.onSurfaceVariant)
                                     }
                                 }
@@ -123,16 +119,16 @@ internal fun PlayerScreen(
                                     Icon(if (favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (favorite) "お気に入りを解除" else "お気に入りに登録", tint = if (favorite) playerColors.primary else Color.White)
                                 }
                             }
-                            SeekControls(vm, playback, compact = compact)
-                            PlaybackButtons(vm, playback, compact = compact, secondary = false)
-                            VolumeControl()
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            SeekControls(vm, playback, compact = true)
+                            PlaybackButtons(vm, playback, compact = compact)
+                            VolumeControl(bitPerfect = outputState.bitPerfectVolumeRestricted)
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                                 PlayerTool("歌詞", Icons.Rounded.Lyrics, panel == "lyrics", compact) { setPanel(if (panel == "lyrics") "player" else "lyrics") }
                                 PlayerTool("出力", Icons.Rounded.SpeakerGroup, false, compact, output)
                                 PlayerTool("キュー", Icons.Rounded.QueueMusic, panel == "queue", compact) { setPanel(if (panel == "queue") "player" else "queue") }
                                 PlayerTool("サウンド", Icons.Rounded.Equalizer, false, compact, sound)
                             }
-                            Spacer(Modifier.height(if (compact) 4.dp else 8.dp))
+                            Spacer(Modifier.height(if (compact) 8.dp else 16.dp))
                         }
                         if (wide) {
                             Row(
@@ -142,21 +138,23 @@ internal fun PlayerScreen(
                             ) {
                                 panelContent(Modifier.weight(1f).fillMaxHeight())
                                 Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())) {
-                                    header()
+                                    header(Modifier)
                                     if (standby.armed) Text("横向きでスタンバイを表示", style = MaterialTheme.typography.labelSmall)
                                     details()
                                 }
                             }
                         } else {
-                            Column(Modifier.fillMaxSize().padding(horizontal = LumaSpacing.Page).then(chrome)) {
-                                header()
-                                if (standby.armed) Text("スタンバイ待機中 · 端末を横向きに", style = MaterialTheme.typography.labelSmall)
-                                panelContent(Modifier.weight(1f).fillMaxWidth())
-                                if (compactDetailsHeight != null) {
-                                    Column(Modifier.heightIn(max = compactDetailsHeight).verticalScroll(rememberScrollState()), content = details)
-                                } else {
-                                    details()
-                                }
+                            val insetChrome = Modifier.padding(horizontal = LumaSpacing.Page).then(chrome)
+                            Column(Modifier.fillMaxSize()) {
+                                header(insetChrome)
+                                if (standby.armed) Text("スタンバイ待機中 · 端末を横向きに", modifier = insetChrome, style = MaterialTheme.typography.labelSmall)
+                                val panelArea = Modifier.weight(1f).fillMaxWidth()
+                                // The noninteractive artwork fills the safe area, including both margins.
+                                panelContent(if (panel == "player") panelArea else panelArea.then(insetChrome))
+                                Column(
+                                    insetChrome.heightIn(max = compactDetailsHeight).verticalScroll(rememberScrollState()),
+                                    content = details
+                                )
                             }
                         }
                     }
@@ -166,8 +164,8 @@ internal fun PlayerScreen(
     }
 }
 
-@Composable private fun PlayerTool(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, selected: Boolean, compact: Boolean, action: () -> Unit) {
-    Column(Modifier.widthIn(min = 64.dp).heightIn(min = 48.dp).clickable(onClick = action).padding(horizontal = 10.dp, vertical = if (compact) 0.dp else 4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+@Composable private fun RowScope.PlayerTool(label: String, icon: ImageVector, selected: Boolean, compact: Boolean, action: () -> Unit) {
+    Column(Modifier.weight(1f).heightIn(min = 48.dp).clickable(onClick = action).padding(horizontal = 4.dp, vertical = if (compact) 0.dp else 4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Icon(icon, null, Modifier.size(21.dp), tint = if (selected) MaterialTheme.colorScheme.primary else LocalContentColor.current.copy(.78f))
         Spacer(Modifier.height(if (compact) 2.dp else 4.dp))
         TrackText(label, style = if (compact) MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, lineHeight = 14.sp) else MaterialTheme.typography.labelSmall, color = if (selected) MaterialTheme.colorScheme.primary else LocalContentColor.current.copy(.78f))
@@ -176,10 +174,17 @@ internal fun PlayerScreen(
 
 @Composable fun SeekControls(vm: LumaViewModel, playback: PlaybackUi, compact: Boolean = false) {
     val live by vm.playback.state.collectAsStateWithLifecycle()
-    var dragged by remember(live.mediaId) { mutableStateOf<Float?>(null) }
+    var dragged by remember(live.mediaId, live.index) { mutableStateOf<Float?>(null) }
     val duration = live.duration.toFloat().coerceAtLeast(1f)
     val position = (dragged ?: live.position.toFloat()).coerceIn(0f, duration)
-    val slider: @Composable () -> Unit = { LumaSlider(position, { dragged = it }, range = 0f..duration, enabled = live.duration > 0, onFinished = { dragged?.let { vm.playback.seek(it.toLong()) }; dragged = null }) }
+    val slider: @Composable () -> Unit = {
+        key(live.mediaId, live.index) {
+            LumaSlider(
+                position, { dragged = it }, range = 0f..duration, enabled = live.duration > 0,
+                onFinished = { dragged?.let { vm.playback.seek(it.toLong()) }; dragged = null }
+            )
+        }
+    }
     val times: @Composable (Modifier) -> Unit = { modifier ->
         Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             val style = if (compact) MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, lineHeight = 14.sp) else MaterialTheme.typography.labelSmall
@@ -192,13 +197,76 @@ internal fun PlayerScreen(
     else { slider(); times(Modifier) }
 }
 
-@Composable fun PlaybackButtons(vm: LumaViewModel, playback: PlaybackUi, compact: Boolean = false, secondary: Boolean = true) {
-    Row(Modifier.fillMaxWidth().height(if (compact) 56.dp else 78.dp), horizontalArrangement = if (secondary) Arrangement.SpaceBetween else Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-        if (secondary) IconButton(vm.playback::shuffle) { Icon(Icons.Rounded.Shuffle, "シャッフル", Modifier.size(22.dp), tint = if (playback.shuffle) MaterialTheme.colorScheme.primary else LocalContentColor.current.copy(.5f)) }
-        IconButton(vm.playback::previous) { Icon(Icons.Rounded.SkipPrevious, "前の曲", Modifier.size(34.dp)) }
-        IconButton(vm.playback::toggle, Modifier.size(if (compact) 56.dp else 72.dp)) { Icon(if (playback.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (playback.playing) "一時停止" else "再生", Modifier.size(if (compact) 42.dp else 50.dp)) }
-        IconButton(vm.playback::next) { Icon(Icons.Rounded.SkipNext, "次の曲", Modifier.size(34.dp)) }
-        if (secondary) IconButton(vm.playback::repeat) { Icon(if (playback.repeat == 1) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, "リピート切替", Modifier.size(22.dp), tint = if (playback.repeat != 0) MaterialTheme.colorScheme.primary else LocalContentColor.current.copy(.5f)) }
+@Composable
+fun PlaybackButtons(vm: LumaViewModel, playback: PlaybackUi, compact: Boolean = false) {
+    val playbackHeight = if (compact) 56.dp else 68.dp
+    val shuffle: @Composable () -> Unit = {
+        PlaybackModeButton(
+            Icons.Rounded.Shuffle, "シャッフル", if (playback.shuffle) "オン" else "オフ",
+            playback.shuffle, playback.canShuffle && playback.queue.size > 1, { vm.playback.shuffle() },
+        )
+    }
+    val repeat: @Composable () -> Unit = {
+        PlaybackModeButton(
+            if (playback.repeat == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+            "リピート切替",
+            when (playback.repeat) {
+                Player.REPEAT_MODE_ALL -> "全曲リピート"
+                Player.REPEAT_MODE_ONE -> "1曲リピート"
+                else -> "オフ"
+            },
+            playback.repeat != Player.REPEAT_MODE_OFF, playback.canRepeat, { vm.playback.repeat() },
+        )
+    }
+    val transport: @Composable (Modifier) -> Unit = { modifier ->
+        Row(modifier.height(playbackHeight), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+            IconButton({ vm.playback.previousItem() }, enabled = playback.previousIndex != null) {
+                Icon(Icons.Rounded.SkipPrevious, "前の曲", Modifier.size(34.dp))
+            }
+            IconButton(vm.playback::toggle, Modifier.size(if (compact) 56.dp else 64.dp)) {
+                Icon(if (playback.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (playback.playing) "一時停止" else "再生", Modifier.size(if (compact) 42.dp else 50.dp))
+            }
+            IconButton({ vm.playback.next() }, enabled = playback.nextIndex != null) {
+                Icon(Icons.Rounded.SkipNext, "次の曲", Modifier.size(34.dp))
+            }
+        }
+    }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (maxWidth >= 256.dp) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                shuffle()
+                transport(Modifier.weight(1f))
+                repeat()
+            }
+        } else {
+            Column {
+                transport(Modifier.fillMaxWidth())
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    shuffle()
+                    repeat()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaybackModeButton(
+    image: ImageVector, label: String, description: String, active: Boolean, enabled: Boolean, onClick: () -> Unit
+) {
+    IconButton(onClick, modifier = Modifier.size(48.dp).semantics {
+        selected = active
+        stateDescription = description
+    }, enabled = enabled) {
+        val tint = when {
+            !enabled -> LocalContentColor.current.copy(alpha = .38f)
+            active -> MaterialTheme.colorScheme.primary
+            else -> LocalContentColor.current.copy(alpha = .68f)
+        }
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Icon(image, label, Modifier.size(22.dp), tint = tint)
+            if (active && enabled) Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp).size(3.dp).background(tint, CircleShape))
+        }
     }
 }
 
@@ -229,16 +297,80 @@ internal fun PlayerScreen(
 }
 
 @Composable private fun QueuePanel(vm: LumaViewModel, playback: PlaybackUi, modifier: Modifier = Modifier) {
+    var editOriginalOrder by rememberSaveable(playback.shuffle) { mutableStateOf(false) }
+    val showPlaybackOrder = playback.shuffle && !editOriginalOrder
+    val upcoming = playback.upcomingIndices
+    val remaining = remember(playback.queue, playback.index, upcoming) {
+        val shown = upcoming.toSet()
+        playback.queue.indices.filter { it != playback.index && it !in shown }
+    }
     LazyColumn(modifier) {
-        item { Text("次はこちら", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 16.dp)) }
-        itemsIndexed(playback.queue, key = { i, item -> "${item.mediaId}-$i" }) { i, item ->
-            Row(Modifier.fillMaxWidth().clickable { vm.playback.skip(i) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(if (i == playback.index) "♪" else "${i + 1}", color = Rose, modifier = Modifier.width(28.dp))
-                TrackText(item.mediaMetadata.title?.toString().orEmpty(), modifier = Modifier.weight(1f))
-                DragHandle(i, playback.queue.size, vm.playback::move)
-                IconButton({ if (i > 0) vm.playback.move(i, i - 1) }, enabled = i > 0) { Icon(Icons.Rounded.ArrowUpward, "キューを上に移動") }
-                IconButton({ vm.playback.remove(i) }) { Icon(Icons.Rounded.Close, "キューから削除") }
+        item {
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                TrackText(
+                    if (editOriginalOrder) "元の順序" else "次はこちら",
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                )
+                if (playback.shuffle) {
+                    TextButton({ editOriginalOrder = !editOriginalOrder }) {
+                        TrackText(if (editOriginalOrder) "再生順に戻る" else "元の順序を編集", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
             }
+            if (editOriginalOrder) {
+                Text("シャッフル再生中", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+            } else if (playback.shuffle || playback.repeat == Player.REPEAT_MODE_ONE) {
+                val mode = when {
+                    playback.shuffle && playback.repeat == Player.REPEAT_MODE_ONE -> "シャッフル順 · 1曲リピート中"
+                    playback.shuffle -> "シャッフル順"
+                    else -> "1曲リピート中"
+                }
+                Text(mode, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+            }
+            if (!showPlaybackOrder) {
+                val nextTitle = playback.nextItem?.mediaMetadata?.title?.toString()
+                if (!nextTitle.isNullOrBlank()) {
+                    val label = if (playback.repeat == Player.REPEAT_MODE_ONE) "手動で次に進む曲" else "次に再生"
+                    TrackText("$label · $nextTitle", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+                }
+            }
+        }
+        if (showPlaybackOrder) {
+            queueRows(vm, playback, listOf(playback.index) + upcoming, reorder = false)
+            if (remaining.isNotEmpty()) {
+                item { Text("キュー内のほかの曲", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(vertical = 12.dp)) }
+                queueRows(vm, playback, remaining, reorder = false)
+            }
+        } else {
+            queueRows(vm, playback, playback.queue.indices.toList(), reorder = true)
+        }
+    }
+}
+
+private fun LazyListScope.queueRows(vm: LumaViewModel, playback: PlaybackUi, indices: List<Int>, reorder: Boolean) {
+    val rows = indices.mapNotNull { index -> playback.queue.getOrNull(index)?.let { index to it } }
+    items(rows, key = { (index, item) -> "${item.mediaId}-$index" }) { (index, item) ->
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 72.dp).clickable { vm.playback.skip(index, item) },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val marker = when (index) {
+                playback.index -> "再生中"
+                playback.nextIndex -> if (playback.repeat == Player.REPEAT_MODE_ONE) "手動で次に進む曲" else "次に再生"
+                else -> null
+            }
+            Column(Modifier.weight(1f)) {
+                TrackText(item.mediaMetadata.title?.toString().orEmpty())
+                if (marker != null) Text(marker, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
+            }
+            if (reorder) {
+                DragHandle(index, playback.queue.size, vm.playback::move)
+                IconButton({ vm.playback.move(index, index - 1) }, enabled = index > 0) {
+                    Icon(Icons.Rounded.ArrowUpward, "キューを上に移動")
+                }
+            }
+            IconButton({ vm.playback.remove(index) }) { Icon(Icons.Rounded.Close, "キューから削除") }
         }
     }
 }

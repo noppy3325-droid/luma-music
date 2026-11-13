@@ -40,6 +40,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
@@ -69,12 +70,13 @@ internal class PlayerSheetState(private val scope: CoroutineScope, initiallyExpa
     private var hostOrigin by mutableStateOf(Offset.Zero)
     private var hostHeight by mutableFloatStateOf(1f)
     private var targetExpanded by mutableStateOf(initiallyExpanded)
-    private var dragging = false
+    private var dragging by mutableStateOf(false)
+    private var dragFromExpanded = initiallyExpanded
     private var animation: Job? = null
     var reducedMotion = false
 
-    val active: Boolean get() = targetExpanded || progress > 0f
-    val expanded: Boolean get() = targetExpanded && progress == 1f
+    val active: Boolean get() = targetExpanded || progress > 0f || dragging
+    val expanded: Boolean get() = !dragging && targetExpanded && progress == 1f
     private val travel: Float get() = ((miniBounds?.top?.minus(hostOrigin.y) ?: (hostHeight * .85f))).coerceAtLeast(1f)
 
     fun layout(origin: Offset, height: Int) {
@@ -84,28 +86,40 @@ internal class PlayerSheetState(private val scope: CoroutineScope, initiallyExpa
 
     fun miniInHost(): Rect? = miniBounds?.translate(-hostOrigin)
 
+    fun visibleBounds(size: Size): Rect {
+        val mini = miniInHost() ?: Rect(0f, size.height * .85f, size.width, size.height)
+        return interpolateBounds(mini, Rect(Offset.Zero, size), progress)
+    }
+
     fun open() = settle(expand = true)
     fun close() = settle(expand = false)
 
-    fun canDrag(opening: Boolean) = if (opening) !active else expanded
+    fun canDrag(opening: Boolean?) = !dragging && when (opening) {
+        true -> !active
+        false -> expanded
+        null -> active && !expanded
+    }
 
-    fun beginDrag() {
+    fun beginDrag(): Boolean {
+        if (dragging) return false
         animation?.cancel()
+        dragFromExpanded = targetExpanded
         dragging = true
+        return true
     }
 
     fun dragBy(deltaY: Float) {
         if (dragging) progress = (progress - deltaY / travel).coerceIn(0f, 1f)
     }
 
-    fun finishDrag(opening: Boolean, velocityY: Float, minFlingVelocity: Float, cancelled: Boolean) {
+    fun finishDrag(velocityY: Float, minFlingVelocity: Float, cancelled: Boolean) {
         if (!dragging) return
         val expand = when {
-            cancelled -> !opening
+            cancelled -> dragFromExpanded
             velocityY < -minFlingVelocity -> true
             velocityY > minFlingVelocity -> false
-            opening -> progress >= .30f
-            else -> progress > .70f
+            dragFromExpanded -> progress > .72f
+            else -> progress >= .28f
         }
         settle(expand, if (cancelled) 0f else -velocityY / travel)
     }
@@ -145,24 +159,30 @@ internal fun rememberPlayerSheetState(): PlayerSheetState {
 }
 
 /**
- * Installed only on the mini player's identity area and the expanded player's
- * header/artwork. A horizontal or wrong-way movement leaves the event unconsumed.
+ * The settled mini player and full player accept drags in designated areas.
+ * During a transition the visible sheet can be grabbed in either direction.
  */
 internal fun Modifier.playerSheetDrag(
     state: PlayerSheetState,
-    opening: Boolean,
-    enabled: Boolean = true
-): Modifier = if (!enabled) this else pointerInput(state, opening) {
+    opening: Boolean?,
+): Modifier = pointerInput(state, opening) {
     val minFlingVelocity = 730.dp.toPx()
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
         if (!state.canDrag(opening)) return@awaitEachGesture
+        if (opening == null && !state.visibleBounds(Size(size.width.toFloat(), size.height.toFloat())).contains(down.position)) {
+            return@awaitEachGesture
+        }
         var distanceY = 0f
         var axisChosen = false
         val tracker = VelocityTracker()
         tracker.addPosition(down.uptimeMillis, Offset.Zero)
         val start = awaitTouchSlopOrCancellation(down.id) { change, overSlop ->
-            val allowedDirection = if (opening) overSlop.y < 0f else overSlop.y > 0f
+            val allowedDirection = when (opening) {
+                true -> overSlop.y < 0f
+                false -> overSlop.y > 0f
+                null -> true
+            }
             if (!axisChosen && allowedDirection && abs(overSlop.y) > abs(overSlop.x)) {
                 change.consume()
                 distanceY = overSlop.y
@@ -170,7 +190,7 @@ internal fun Modifier.playerSheetDrag(
             axisChosen = true
         } ?: return@awaitEachGesture
         tracker.addPosition(start.uptimeMillis, Offset(0f, distanceY))
-        state.beginDrag()
+        if (!state.beginDrag()) return@awaitEachGesture
         state.dragBy(distanceY)
         try {
             val completed = drag(start.id) { change ->
@@ -184,9 +204,9 @@ internal fun Modifier.playerSheetDrag(
             currentEvent.changes.firstOrNull { it.id == start.id }?.let {
                 tracker.addPosition(it.uptimeMillis, Offset(0f, distanceY))
             }
-            state.finishDrag(opening, tracker.calculateVelocity().y, minFlingVelocity, !completed)
+            state.finishDrag(tracker.calculateVelocity().y, minFlingVelocity, !completed)
         } finally {
-            state.finishDrag(opening, 0f, minFlingVelocity, cancelled = true)
+            state.finishDrag(0f, minFlingVelocity, cancelled = true)
         }
     }
 }
@@ -222,18 +242,13 @@ internal fun PlayerSheet(
                 val progress = sheet.progress
                 if (progress == 1f) drawContent()
                 else {
-                    val full = Rect(Offset.Zero, size)
-                    val mini = sheet.miniInHost() ?: Rect(0f, size.height * .85f, size.width, size.height)
                     outline.reset()
-                    outline.addRoundRect(RoundRect(interpolateBounds(mini, full, progress), CornerRadius(24.dp.toPx() * (1f - progress))))
+                    outline.addRoundRect(RoundRect(sheet.visibleBounds(size), CornerRadius(24.dp.toPx() * (1f - progress))))
                     clipPath(outline) { this@onDrawWithContent.drawContent() }
                 }
             }
-        }.pointerInput(Unit) {
-            // Make the topmost sheet modal while keeping the opening gesture's
-            // existing hit path alive in the mini player beneath it.
-            awaitPointerEventScope { while (true) awaitPointerEvent() }
-        }.then(if (sheet.expanded) Modifier else Modifier.clearAndSetSemantics {})
+        }.playerSheetDrag(sheet, opening = null)
+            .then(if (sheet.expanded) Modifier else Modifier.clearAndSetSemantics {})
         Box(panelModifier) {
             PlayerScreen(vm, playback, track, favorite, standby, output, sheet::close, sound, sheet, hero, miniSurface, wide, panel) { panel = it }
             // The miniature text follows its starting plate before the expanded

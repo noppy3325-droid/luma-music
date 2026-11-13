@@ -24,7 +24,14 @@ data class Preferences(
     val glass: Float = .65f,
     val glassQuality: String = "BALANCED",
 )
-data class PlaybackSnapshot(val uris: List<String>, val index: Int = 0, val position: Long = 0, val repeat: Int = 0, val shuffle: Boolean = false)
+data class PlaybackSnapshot(
+    val uris: List<String>,
+    val index: Int = 0,
+    val position: Long = 0,
+    val repeat: Int = 0,
+    val shuffle: Boolean = false,
+    val shuffleOrder: List<Int> = emptyList(),
+)
 
 class SettingsRepository(context: Context) {
     private val store = context.lumaPreferences
@@ -58,10 +65,20 @@ class SettingsRepository(context: Context) {
         runCatching {
             val json = JSONObject(p[stringPreferencesKey("queue")] ?: "{}")
             val queue = json.optJSONArray("uris") ?: JSONArray()
-            PlaybackSnapshot((0 until queue.length()).map(queue::getString), json.optInt("index"), json.optLong("position"), json.optInt("repeat"), json.optBoolean("shuffle"))
+            val order = json.optJSONArray("shuffleOrder") ?: JSONArray()
+            PlaybackSnapshot(
+                (0 until queue.length()).map(queue::getString), json.optInt("index"), json.optLong("position"),
+                json.optInt("repeat"), json.optBoolean("shuffle"),
+                (0 until order.length()).map { order.optInt(it, -1) },
+            )
         }.getOrDefault(PlaybackSnapshot(emptyList()))
     }
-    suspend fun saveSnapshot(value: PlaybackSnapshot) { store.edit { it[stringPreferencesKey("queue")] = JSONObject().put("uris", JSONArray(value.uris)).put("index", value.index).put("position", value.position).put("repeat", value.repeat).put("shuffle", value.shuffle).toString() } }
+    suspend fun saveSnapshot(value: PlaybackSnapshot) {
+        val encoded = JSONObject().put("uris", JSONArray(value.uris)).put("index", value.index)
+            .put("position", value.position).put("repeat", value.repeat).put("shuffle", value.shuffle)
+            .put("shuffleOrder", JSONArray(value.shuffleOrder)).toString()
+        store.edit { it[stringPreferencesKey("queue")] = encoded }
+    }
     suspend fun mode(mode: OutputMode) { store.edit { it[stringPreferencesKey("mode")] = mode.name } }
     suspend fun boolean(key: String, value: Boolean) { store.edit { it[booleanPreferencesKey(key)] = value } }
     suspend fun number(key: String, value: Float) { store.edit { it[floatPreferencesKey(key)] = value } }

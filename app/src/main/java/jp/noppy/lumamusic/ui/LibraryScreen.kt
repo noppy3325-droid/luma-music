@@ -32,6 +32,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Velocity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import jp.noppy.lumamusic.core.albumKey
@@ -117,6 +118,7 @@ internal fun LibraryScreen(
     entries: List<PlaylistEntry>,
     addFolder: () -> Unit,
     openPlayer: () -> Unit,
+    bottomContentPadding: Dp,
     section: String = "library",
     settings: () -> Unit = {},
     active: Boolean = true,
@@ -233,12 +235,13 @@ internal fun LibraryScreen(
 
         stateHolder.SaveableStateProvider("${category.name}:${detailKey.orEmpty()}:$folderPath") {
             when {
-                tracks.isEmpty() && detailKey == null && category !in setOf(LibraryCategory.Folders, LibraryCategory.Playlists) -> LibraryEmpty(scan.running, folders, addFolder)
+                tracks.isEmpty() && detailKey == null && category !in setOf(LibraryCategory.Folders, LibraryCategory.Playlists) ->
+                    LibraryEmpty(scan.running, folders, bottomContentPadding, addFolder)
                 detailKey == null && category == LibraryCategory.Albums -> {
                     LazyVerticalGrid(
                         GridCells.Adaptive(146.dp),
                         Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(start = LumaSpacing.Page, end = LumaSpacing.Page, top = 16.dp, bottom = LumaSpacing.FloatingBottom),
+                        contentPadding = libraryListPadding(bottomContentPadding, top = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                         verticalArrangement = Arrangement.spacedBy(20.dp),
                     ) {
@@ -263,7 +266,7 @@ internal fun LibraryScreen(
                             else -> playlists.map { it.id.toString() to it.name }
                         }
                     }
-                    LazyColumn(Modifier.fillMaxSize(), contentPadding = libraryListPadding()) {
+                    LazyColumn(Modifier.fillMaxSize(), contentPadding = libraryListPadding(bottomContentPadding)) {
                         if (category == LibraryCategory.Playlists) {
                             item {
                                 TextButton({ createPlaylist = true }) {
@@ -285,7 +288,7 @@ internal fun LibraryScreen(
                         }
                     }
                 }
-                else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = libraryListPadding()) {
+                else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = libraryListPadding(bottomContentPadding)) {
                     if (category == LibraryCategory.Folders && detailKey != null) {
                         items(childFolders) { name ->
                             GroupRow(name, icon = Icons.Rounded.Folder) {
@@ -391,8 +394,8 @@ internal fun PageHeading(title: String, onBack: (() -> Unit)? = null, actions: @
     }
 }
 
-internal fun libraryListPadding() =
-    PaddingValues(start = LumaSpacing.Page, end = LumaSpacing.Page, top = 8.dp, bottom = LumaSpacing.FloatingBottom)
+internal fun libraryListPadding(bottom: Dp, top: Dp = 8.dp) =
+    PaddingValues(start = LumaSpacing.Page, end = LumaSpacing.Page, top = top, bottom = bottom)
 
 @Composable
 internal fun GroupRow(
@@ -424,11 +427,11 @@ internal fun GroupRow(
 }
 
 @Composable
-private fun LibraryEmpty(scanning: Boolean, folders: List<MusicFolder>, addFolder: () -> Unit) {
+private fun LibraryEmpty(scanning: Boolean, folders: List<MusicFolder>, bottomContentPadding: Dp, addFolder: () -> Unit) {
     val errors = folders.mapNotNull(MusicFolder::error)
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-            .padding(start = LumaSpacing.Page, end = LumaSpacing.Page, top = 32.dp, bottom = LumaSpacing.FloatingBottom),
+            .padding(libraryListPadding(bottomContentPadding, top = 32.dp)),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {

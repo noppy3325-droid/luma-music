@@ -2,7 +2,13 @@
 
 Android 10以降で動作するオフライン音楽プレイヤー。Kotlin / Jetpack Compose / Media3を使用します。アプリIDは `jp.noppy.lumamusic` です。
 
-[v0.20のAPKをダウンロード](https://github.com/noppy3325-droid/luma-music/releases/download/v0.20/Aurio-0.20.apk)してインストールしてください。既存版と同じ開発用署名を使用し、Roomの追加マイグレーションで登録フォルダー・お気に入り・歌詞・プレイリストを保持します。
+[v0.21のAPKをダウンロード](https://github.com/noppy3325-droid/luma-music/releases/download/v0.21/Aurio-0.21.apk)してインストールしてください。既存版と同じ開発用署名を使用し、Roomの追加マイグレーションで登録フォルダー・お気に入り・歌詞・プレイリストを保持します。
+
+## v0.21
+
+- ミニプレイヤーを左にスワイプすると次の曲へ、右にスワイプすると前の曲へ移ります。上に引くとNow Playingが開きます。
+- Now Playingにシャッフルとリピートのボタンを表示し、キューにMedia3が次に再生する順番を表示します。
+- アートワークから曲情報へのグラデーションと操作間隔を調整し、ライブラリの末尾をボトムメニューより上までスクロールできるようにしました。
 
 ## v0.20
 

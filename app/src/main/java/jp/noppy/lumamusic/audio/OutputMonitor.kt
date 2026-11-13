@@ -25,7 +25,10 @@ data class OutputState(
     val bitPerfect: String = "未確認",
     val message: String? = null,
     val mixerApplied: Boolean = false,
-)
+) {
+    val bitPerfectVolumeRestricted: Boolean
+        get() = mixerApplied && requested == OutputMode.BIT_PERFECT && actual?.usb == true
+}
 
 class OutputMonitor(context: Context) {
     private val audio = context.getSystemService(AudioManager::class.java)

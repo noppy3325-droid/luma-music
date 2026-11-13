@@ -30,6 +30,8 @@ import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.colorControls
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
+import com.kyant.backdrop.highlight.Highlight
+import com.kyant.backdrop.shadow.Shadow
 
 enum class GlassQuality(val label: String) { HIGH("高品質"), BALANCED("バランス"), REDUCED("軽量"), OFF("オフ") }
 val LocalLiquidBackdrop = staticCompositionLocalOf<Backdrop?> { null }
@@ -60,7 +62,11 @@ val LocalReducedMotion = staticCompositionLocalOf { false }
     }
 }
 
-@Composable fun Modifier.liquidSurface(radius: Int = 28): Modifier {
+@Composable fun Modifier.liquidSurface(
+    radius: Int = 28,
+    highlight: Highlight = Highlight.Default,
+    shadow: Shadow = Shadow.Default,
+): Modifier {
     val source = LocalLiquidBackdrop.current
     val quality = LocalGlassQuality.current
     val dark = MaterialTheme.colorScheme.background.luminance() < .5f
@@ -74,6 +80,8 @@ val LocalReducedMotion = staticCompositionLocalOf { false }
     return drawBackdrop(
         backdrop = source,
         shape = { shape },
+        highlight = { highlight },
+        shadow = { shadow },
         effects = {
             vibrancy()
             // Limit sampled luminance as well as tinting: labels remain readable over

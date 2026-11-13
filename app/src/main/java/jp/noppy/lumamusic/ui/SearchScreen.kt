@@ -32,6 +32,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import jp.noppy.lumamusic.data.MusicFolder
@@ -62,6 +63,7 @@ internal fun SearchScreen(
     entries: List<PlaylistEntry>,
     addFolder: () -> Unit,
     openPlayer: () -> Unit,
+    bottomContentPadding: Dp,
     active: Boolean = true,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
@@ -103,6 +105,7 @@ internal fun SearchScreen(
         key(category, detailKey) {
             LibraryScreen(
                 vm, tracks, folders, users, playlists, entries, addFolder, openPlayer,
+                bottomContentPadding = bottomContentPadding,
                 active = active,
                 initialDetail = LibraryDetail(category, detailKey, detailName),
                 onCloseDetail = { detailCategory = null },
@@ -132,7 +135,7 @@ internal fun SearchScreen(
                 scope.launch { listState.scrollToItem(0) }
             }
         }
-        LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = libraryListPadding()) {
+        LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = libraryListPadding(bottomContentPadding)) {
             if (query.isBlank()) return@LazyColumn
             if (found == null) return@LazyColumn
             if (found.isEmpty) {

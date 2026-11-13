@@ -60,12 +60,14 @@ class PlaybackDeviceTest {
             val first = fixture(44100)
             val second = fixture(48000)
             main {
+                controller.shuffleModeEnabled = false
+                controller.repeatMode = Player.REPEAT_MODE_OFF
                 controller.setMediaItems(listOf(first, second).map { f -> MediaItem.Builder().setMediaId(f.name).setUri(Uri.fromFile(f)).setMediaMetadata(MediaMetadata.Builder().setTitle(f.name).setArtist("Aurio validation • silent PCM").build()).build() })
                 controller.prepare(); controller.play()
             }
-            await("44.1 kHz playback advances") { controller.isPlaying && controller.currentPosition > 300 }
+            await("44.1 kHz playback advances") { controller.isPlaying && controller.currentMediaItem?.mediaId == first.name && controller.currentPosition > 300 }
             val app = context.applicationContext as LumaApp
-            await("observed route") { app.output.state.value.actual != null }
+            await("observed 44.1 kHz route") { app.output.state.value.actual != null && app.output.state.value.track?.rate == 44100 }
             instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
             await("background playback continues") { controller.isPlaying && controller.currentPosition > 1000 }
             val notifications = context.getSystemService(NotificationManager::class.java)

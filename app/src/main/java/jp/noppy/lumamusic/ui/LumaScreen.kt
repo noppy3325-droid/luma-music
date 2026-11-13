@@ -11,6 +11,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
@@ -24,6 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -69,6 +71,7 @@ import java.time.format.DateTimeFormatter
     val pager = rememberPagerState { LumaTabs.size }
     val sheet = rememberPlayerSheetState()
     val playerVisible = playback.mediaId != null && sheet.active
+    val playerCoversBars by remember(sheet) { derivedStateOf { sheet.progress > .92f } }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showSound by rememberSaveable { mutableStateOf(false) }
     var showOutput by remember { mutableStateOf(false) }
@@ -78,13 +81,15 @@ import java.time.format.DateTimeFormatter
     val quality = effectiveGlassQuality(prefs.glassQuality, prefs.reducedMotion)
     val reducedMotion = prefs.reducedMotion || quality == GlassQuality.REDUCED
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val canSwipeTabs = !playerVisible && !imeVisible
+    val tabFling = PagerDefaults.flingBehavior(pager, snapPositionalThreshold = .32f)
     fun selectTab(index: Int) {
         focus.clearFocus()
         keyboard?.hide()
         tabChange?.cancel()
         tabChange = navigationScope.launch {
             if (reducedMotion) pager.scrollToPage(index)
-            else pager.animateScrollToPage(index, animationSpec = spring(dampingRatio = .9f, stiffness = Spring.StiffnessMediumLow))
+            else pager.animateScrollToPage(index, animationSpec = spring(dampingRatio = .94f, stiffness = Spring.StiffnessMedium))
         }
     }
     val openSound = { standby.exit(); showSound = true }
@@ -98,7 +103,7 @@ import java.time.format.DateTimeFormatter
         val dark = scheme.background == LumaColors.Dark
         val activity = LocalActivity.current
         val view = LocalView.current
-        val darkSystemBars = dark || (playerVisible && !showSound && !showSettings) || standby.active
+        val darkSystemBars = dark || (playerVisible && playerCoversBars && !showSound && !showSettings) || standby.active
         SideEffect {
             activity?.window?.let { window ->
                 WindowCompat.getInsetsController(window, view).apply {
@@ -124,40 +129,63 @@ import java.time.format.DateTimeFormatter
                     standby.active -> LiquidBackdropHost(
                         Modifier.fillMaxSize(),
                         content = { AlbumBackdrop(selected?.artwork ?: playback.artwork, playback.title, reducedMotion, scheme.background) },
-                        overlay = { StandbyScreen(vm, playback, selected, prefs, standby, openSound) },
+                        overlay = { StandbyScreen(vm, playback, selected, prefs, standby, openSound, output.bitPerfectVolumeRestricted) },
                     )
                     showSettings -> Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
                         SettingsScreen(vm, prefs, folders, { picker.launch(null) }, { showOutput = true }, openSound, { showSettings = false })
                     }
                     else -> {
+                        var dockHeightPx by remember { mutableIntStateOf(0) }
+                        val bottomContentPadding = with(LocalDensity.current) { dockHeightPx.toDp() } + LumaDock.ListClearance
                         val backgroundSemantics = if (playerVisible) Modifier.semantics { hideFromAccessibility() } else Modifier
                         LiquidBackdropHost(Modifier.fillMaxSize().imePadding().then(backgroundSemantics), content = {
                             Box(Modifier.matchParentSize().background(scheme.background))
                             HorizontalPager(
                                 state = pager,
                                 modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)),
-                                userScrollEnabled = !playerVisible && !imeVisible,
+                                userScrollEnabled = canSwipeTabs,
+                                flingBehavior = tabFling,
                                 key = { LumaTabs[it].key },
                             ) { index ->
                                 val tab = LumaTabs[index].key
                                 tabState.SaveableStateProvider(tab) {
                                     val active = !playerVisible && pager.settledPage == index
                                     if (tab == "search") {
-                                        SearchScreen(vm, tracks, folders, users, playlists, entries, { picker.launch(null) }, openPlayer, active = active)
+                                        SearchScreen(
+                                            vm, tracks, folders, users, playlists, entries, { picker.launch(null) }, openPlayer,
+                                            bottomContentPadding = bottomContentPadding,
+                                            active = active,
+                                        )
                                     } else {
-                                        LibraryScreen(vm, tracks, folders, users, playlists, entries, { picker.launch(null) }, openPlayer, tab, { showSettings = true }, active = active)
+                                        LibraryScreen(
+                                            vm, tracks, folders, users, playlists, entries, { picker.launch(null) }, openPlayer,
+                                            bottomContentPadding = bottomContentPadding,
+                                            section = tab,
+                                            settings = { showSettings = true },
+                                            active = active,
+                                        )
                                     }
                                 }
                             }
                         }, overlay = {
+                            val dockInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal)
+                                .union(WindowInsets.mandatorySystemGestures.only(WindowInsetsSides.Bottom))
                             Column(
                                 Modifier.align(Alignment.BottomCenter)
-                                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
-                                    .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                                    // Measure the complete dock, including its remaining bottom inset.
+                                    // The common parent has already consumed the keyboard inset.
+                                    .onSizeChanged { dockHeightPx = it.height }
+                                    .windowInsetsPadding(dockInsets)
+                                    .padding(
+                                        start = LumaDock.HorizontalMargin,
+                                        end = LumaDock.HorizontalMargin,
+                                        bottom = LumaDock.BottomMargin,
+                                    ),
+                                verticalArrangement = Arrangement.spacedBy(LumaDock.PanelGap),
+                                horizontalAlignment = Alignment.CenterHorizontally,
                             ) {
                                 if (playback.mediaId != null && !imeVisible) MiniPlayerRoute(vm, selected, sheet)
-                                LumaGlassTabBar(pager, ::selectTab)
+                                LumaGlassTabBar(pager, canSwipeTabs, ::selectTab)
                             }
                         })
                         if (playback.mediaId != null) {
@@ -180,19 +208,31 @@ import java.time.format.DateTimeFormatter
 
 @Composable private fun MiniPlayerRoute(vm: LumaViewModel, track: Track?, sheet: PlayerSheetState) {
     val playback by vm.playback.state.collectAsStateWithLifecycle()
-    val display = playback.copy(title = track?.title ?: playback.title, artist = track?.artist ?: playback.artist, artwork = track?.artworkThumbnail ?: track?.artwork ?: playback.artwork)
+    val currentTrack = track?.takeIf { it.uri == playback.mediaId }
+    val display = playback.copy(
+        title = currentTrack?.title ?: playback.title,
+        artist = currentTrack?.artist ?: playback.artist,
+        artwork = playback.artwork ?: currentTrack?.artwork ?: currentTrack?.artworkThumbnail,
+    )
+    val scope = rememberCoroutineScope()
+    val motion = remember(scope) { MiniPlayerMotion(scope) }
+    val reduced = LocalReducedMotion.current
+    val currentDisplay = rememberUpdatedState(display)
+    val currentReduced = rememberUpdatedState(reduced)
+    LaunchedEffect(display.index, display.mediaId) { motion.observe(display) }
     LumaGlassMiniPlayer(
         display,
         modifier = Modifier.onGloballyPositioned { sheet.miniBounds = it.boundsInRoot() }
             .graphicsLayer { alpha = if (sheet.active) 0f else 1f },
-        openGesture = Modifier.playerSheetDrag(sheet, opening = true),
+        trackGesture = Modifier.miniPlayerDrag(sheet, motion, currentDisplay, currentReduced, vm.playback),
         open = sheet::open,
         toggle = vm.playback::toggle,
-        next = vm.playback::next,
-    )
+        next = { vm.playback.next() },
+        previous = { vm.playback.previousItem() },
+    ) { MiniPlayerTracks(display, motion, reduced) }
 }
 
-@Composable private fun StandbyScreen(vm: LumaViewModel, playback: PlaybackUi, track: Track?, prefs: Preferences, standby: StandbyController, sound: () -> Unit) {
+@Composable private fun StandbyScreen(vm: LumaViewModel, playback: PlaybackUi, track: Track?, prefs: Preferences, standby: StandbyController, sound: () -> Unit, bitPerfect: Boolean) {
     val activity = LocalActivity.current ?: return
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var resumed by remember { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
@@ -225,7 +265,7 @@ import java.time.format.DateTimeFormatter
             FloatingGlass(Modifier.fillMaxWidth(), 24, PaddingValues(horizontal = 12.dp, vertical = 0.dp)) {
                 SeekControls(vm, playback, compact = true)
                 PlaybackButtons(vm, playback, compact = true)
-                VolumeControl()
+                VolumeControl(bitPerfect = bitPerfect)
             }
             if (prefs.standbyLyrics) StandbyLyric(vm, track)
         }
@@ -243,10 +283,21 @@ import java.time.format.DateTimeFormatter
     Text(line?.text.orEmpty(), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
 }
 
-@Composable internal fun VolumeControl() {
+@Composable internal fun VolumeControl(bitPerfect: Boolean = false) {
     val context = LocalContext.current
     val audio = remember { context.getSystemService(AudioManager::class.java) }
     val max = remember { audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC) }
     var volume by remember { mutableFloatStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()) }
-    Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Rounded.VolumeDown, null); LumaSlider(volume, { volume = it; audio.setStreamVolume(AudioManager.STREAM_MUSIC, it.toInt(), 0) }, range = 0f..max.toFloat().coerceAtLeast(1f), modifier = Modifier.weight(1f), label = "音量"); Icon(Icons.Rounded.VolumeUp, "音量") }
+    val fixed = audio.isVolumeFixed
+    if (bitPerfect || fixed) {
+        val label = if (bitPerfect) "USBビットパーフェクト設定中 · 音量は出力機器で調整" else "この出力の音量は出力機器で調整"
+        Text(label, Modifier.padding(vertical = 10.dp), style = MaterialTheme.typography.labelSmall)
+    } else {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.VolumeDown, null)
+            LumaSlider(volume, { volume = it; audio.setStreamVolume(AudioManager.STREAM_MUSIC, it.toInt(), 0) },
+                range = 0f..max.toFloat().coerceAtLeast(1f), modifier = Modifier.weight(1f), label = "音量")
+            Icon(Icons.Rounded.VolumeUp, "音量")
+        }
+    }
 }

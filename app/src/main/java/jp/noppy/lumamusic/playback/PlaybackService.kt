@@ -6,11 +6,17 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioTrack
 import android.net.Uri
+import android.os.Bundle
+import android.os.Process
 import androidx.media3.common.*
 import androidx.media3.exoplayer.*
 import androidx.media3.exoplayer.audio.*
 import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.source.ShuffleOrder.DefaultShuffleOrder
 import androidx.media3.session.*
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.SettableFuture
 import jp.noppy.lumamusic.LumaApp
 import jp.noppy.lumamusic.MainActivity
 import jp.noppy.lumamusic.R
@@ -23,7 +29,10 @@ import jp.noppy.lumamusic.data.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.random.Random
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class PlaybackService : MediaSessionService() {
@@ -39,6 +48,7 @@ class PlaybackService : MediaSessionService() {
     private var analysisJob: Job? = null
     private var libraryIndex: Map<String, Track> = emptyMap()
     private var lastScheduledSnapshot: PlaybackSnapshot? = null
+    private val queueEdits = Mutex()
 
     override fun onCreate() {
         super.onCreate()
@@ -83,7 +93,10 @@ class PlaybackService : MediaSessionService() {
         // Remain conservative before asynchronous preferences arrive.
         app.output.processingIsUnchanged(false)
         val activity = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        session = MediaSession.Builder(this, player).setSessionActivity(activity).build()
+        session = MediaSession.Builder(this, SessionQueuePlayer(player))
+            .setSessionActivity(activity)
+            .setCallback(SessionCallbacks())
+            .build()
         player.addAnalyticsListener(object : AnalyticsListener {
             override fun onAudioUnderrun(eventTime: AnalyticsListener.EventTime, bufferSize: Int, bufferSizeMs: Long, elapsedSinceLastFeedMs: Long) {
                 android.util.Log.w("LumaAudioHealth", "underrun bytes=$bufferSize bufferMs=$bufferSizeMs feedGapMs=$elapsedSinceLastFeedMs")
@@ -121,24 +134,7 @@ class PlaybackService : MediaSessionService() {
                 }
             }
         })
-        scope.launch {
-            val snapshot = app.settings.snapshot.first()
-            // A new UI command arriving during restoration owns the queue.
-            if (player.mediaItemCount == 0 && snapshot.uris.isNotEmpty()) {
-                val tracks = withContext(Dispatchers.IO) { snapshot.uris.mapNotNull { app.library.dao.track(it) }
-                    .filter { track -> runCatching { contentResolver.openFileDescriptor(Uri.parse(track.uri), "r")?.use { true } == true }.getOrDefault(false) } }
-                if (tracks.isNotEmpty() && player.mediaItemCount == 0) {
-                    val originalUri = snapshot.uris.getOrNull(snapshot.index)
-                    val index = tracks.indexOfFirst { it.uri == originalUri }.coerceAtLeast(0)
-                    player.setMediaItems(tracks.map(Track::mediaItem), index, if (tracks[index].uri == originalUri) snapshot.position.coerceAtLeast(0) else 0)
-                    player.repeatMode = snapshot.repeat.takeIf { it in 0..2 } ?: Player.REPEAT_MODE_OFF
-                    player.shuffleModeEnabled = snapshot.shuffle
-                    player.prepare()
-                    // Restoration intentionally remains paused.
-                }
-            }
-            restored = true
-        }
+        scope.launch { restorePlayback() }
         scope.launch { app.settings.preferences.collect { app.output.mode(it.mode) } }
         scope.launch { app.settings.soundSettings.collect { DspRuntime.settings(it); updateProcessing(); loadAnalysis() } }
         scope.launch { DspRuntime.state.collect { updateProcessing() } }
@@ -149,6 +145,99 @@ class PlaybackService : MediaSessionService() {
             }
         }
         scope.launch { while (isActive) { delay(5000); save() } }
+    }
+
+    private inner class SessionCallbacks : MediaSession.Callback {
+        private fun isOwnController(controller: MediaSession.ControllerInfo): Boolean =
+            controller.uid == Process.myUid() && controller.packageName == packageName
+
+        override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
+            if (!isOwnController(controller)) return super.onConnect(session, controller)
+            val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon().add(addQueueItemCommand).build()
+            return MediaSession.ConnectionResult.AcceptedResultBuilder(session, controller)
+                .setAvailableSessionCommands(commands)
+                .build()
+        }
+
+        override fun onCustomCommand(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            customCommand: SessionCommand,
+            args: Bundle,
+        ): ListenableFuture<SessionResult> {
+            if (customCommand.customAction != addQueueItemCommand.customAction) {
+                return super.onCustomCommand(session, controller, customCommand, args)
+            }
+            if (!isOwnController(controller)) return Futures.immediateFuture(SessionResult(SessionError.ERROR_PERMISSION_DENIED))
+            val uri = args.getString(QUEUE_ITEM_URI)
+                ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_BAD_VALUE))
+            val playNext = args.getBoolean(QUEUE_PLAY_NEXT)
+            val result = SettableFuture.create<SessionResult>()
+            val job = scope.launch {
+                try {
+                    val response = queueEdits.withLock {
+                        val track = withContext(Dispatchers.IO) { app.library.dao.track(uri)?.takeIf(::isReadable) }
+                        if (track == null) SessionResult(SessionError.ERROR_IO) else insertIntoQueue(track, playNext)
+                    }
+                    result.set(response)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    android.util.Log.w("LumaPlayback", "Queue insertion failed", error)
+                    result.set(SessionResult(SessionError.ERROR_IO))
+                }
+            }
+            job.invokeOnCompletion { if (!result.isDone) result.cancel(false) }
+            return result
+        }
+    }
+
+    private fun isReadable(track: Track): Boolean = runCatching {
+        contentResolver.openFileDescriptor(Uri.parse(track.uri), "r")?.use { true } == true
+    }.getOrDefault(false)
+
+    private fun insertIntoQueue(track: Track, playNext: Boolean): SessionResult {
+        val count = player.mediaItemCount
+        val current = player.currentMediaItemIndex.takeIf { it in 0 until count }
+        val insertAfter = current.takeIf { playNext }
+        val insertionIndex = insertAfter?.plus(1) ?: count
+        val order = if (player.shuffleModeEnabled) player.currentTimeline.shuffledOrder() else null
+        if (order != null && !order.isWindowPermutation(count)) return SessionResult(SessionError.ERROR_INVALID_STATE)
+        player.addMediaItem(insertionIndex, track.mediaItem())
+        if (order != null) {
+            player.setShuffleOrder(DefaultShuffleOrder(order.afterQueueInsertion(insertionIndex, insertAfter), Random.nextLong()))
+        }
+        save()
+        return SessionResult(SessionResult.RESULT_SUCCESS)
+    }
+
+    private suspend fun restorePlayback() {
+        val saved = app.settings.snapshot.first()
+        // A new queue from the UI wins if it arrives while SAF files are being checked.
+        if (player.mediaItemCount == 0) {
+            player.repeatMode = when (saved.repeat) {
+                Player.REPEAT_MODE_ALL, Player.REPEAT_MODE_ONE -> saved.repeat
+                else -> Player.REPEAT_MODE_OFF
+            }
+            player.shuffleModeEnabled = saved.shuffle
+            val readable = withContext(Dispatchers.IO) {
+                saved.uris.mapIndexedNotNull { index, uri ->
+                    app.library.dao.track(uri)?.takeIf(::isReadable)?.let { index to it }
+                }
+            }
+            if (readable.isNotEmpty() && player.mediaItemCount == 0) {
+                val selected = readable.indexOfFirst { (index, _) -> index >= saved.index }.let { if (it < 0) readable.lastIndex else it }
+                val position = if (readable[selected].first == saved.index) saved.position.coerceAtLeast(0) else 0
+                player.setMediaItems(readable.map { (_, track) -> track.mediaItem() }, selected, position)
+                if (saved.shuffleOrder.isWindowPermutation(saved.uris.size)) {
+                    val remappedIndices = readable.mapIndexed { index, (oldIndex, _) -> oldIndex to index }.toMap()
+                    val restoredOrder = saved.shuffleOrder.mapNotNull(remappedIndices::get).toIntArray()
+                    player.setShuffleOrder(DefaultShuffleOrder(restoredOrder, Random.nextLong()))
+                }
+                player.prepare()
+            }
+        }
+        restored = true
     }
 
     private fun updateProcessing() { app.output.processingIsUnchanged(DspRuntime.snapshot.get().config.mode == SoundMode.DIRECT && !DspRuntime.state.value.applied && player.volume == 1f && player.playbackParameters == PlaybackParameters.DEFAULT && !player.skipSilenceEnabled) }
@@ -180,26 +269,51 @@ class PlaybackService : MediaSessionService() {
             if(player.currentMediaItem?.mediaId==uri&&DspRuntime.snapshot.get().config==cfg)DspRuntime.analysis(profile,message)
         }
     }
-    private fun snapshot() = PlaybackSnapshot((0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }, player.currentMediaItemIndex.coerceAtLeast(0), player.currentPosition.coerceAtLeast(0), player.repeatMode, player.shuffleModeEnabled)
+    private fun snapshot() = PlaybackSnapshot(
+        uris = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId },
+        index = player.currentMediaItemIndex.coerceAtLeast(0),
+        position = player.currentPosition.coerceAtLeast(0),
+        repeat = player.repeatMode,
+        shuffle = player.shuffleModeEnabled,
+        shuffleOrder = player.currentTimeline.shuffledOrder(),
+    )
     private fun save(queueOnly: Boolean = false) {
         if (!restored) return
         val value = snapshot()
         val last = lastScheduledSnapshot
         // Enrichment changes Timeline metadata, not the queue. Keep position writes on the
         // normal timer/transport events rather than writing DataStore for every artwork tag.
-        if (queueOnly && last != null && value.uris == last.uris && value.index == last.index && value.repeat == last.repeat && value.shuffle == last.shuffle) return
+        if (queueOnly && last != null && value.copy(position = last.position) == last) return
         lastScheduledSnapshot = value
         scope.launch { app.settings.saveSnapshot(value) }
     }
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
     override fun onDestroy() {
-        if (::player.isInitialized) { val value = snapshot(); runBlocking(Dispatchers.IO) { app.settings.saveSnapshot(value) } }
         scope.cancel()
+        if (::player.isInitialized && (restored || player.mediaItemCount > 0)) {
+            val value = snapshot()
+            runBlocking(Dispatchers.IO) { app.settings.saveSnapshot(value) }
+        }
         session?.release(); session = null
         if (::player.isInitialized) player.release()
         app.output.close()
         DspRuntime.stopped()
         super.onDestroy()
+    }
+}
+
+/** Translate generic notification and headset skip commands to explicit media-item navigation. */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+private class SessionQueuePlayer(private val engine: Player) : ForwardingPlayer(engine) {
+    override fun seekToPrevious() = seekToPreviousMediaItem()
+    override fun seekToNext() = seekToNextMediaItem()
+
+    override fun seekToPreviousMediaItem() {
+        if (engine.neighborIndex(forward = false) != null) engine.seekToPreviousMediaItem()
+    }
+
+    override fun seekToNextMediaItem() {
+        if (engine.neighborIndex(forward = true) != null) engine.seekToNextMediaItem()
     }
 }
 
