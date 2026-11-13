@@ -27,6 +27,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
@@ -64,10 +65,17 @@ class QueuePlaybackDeviceTest {
         val observer = future.get(15, TimeUnit.SECONDS)
         val original = runBlocking { app.settings.snapshot.first() }
         val originalTracks = runBlocking { original.uris.mapNotNull { app.library.dao.track(it) } }
+        val playlistName = "Aurio test ${UUID.randomUUID()}"
         var resumeOriginal = false
         main { resumeOriginal = observer.playWhenReady }
         try {
             runBlocking { app.library.dao.upsertTracks(tracks) }
+            runBlocking {
+                app.library.createPlaylistWithTrack(" $playlistName ", tracks[1].uri)
+                val list = app.library.dao.playlists().first().single { it.name == playlistName }
+                val entries = app.library.dao.entries().first().filter { it.playlistId == list.id }
+                assertEquals(listOf(tracks[1].uri), entries.map { it.trackUri })
+            }
             await("Both MediaControllers connected") { ui.state.value.connected && observer.isConnected }
             main {
                 observer.pause()
@@ -79,6 +87,11 @@ class QueuePlaybackDeviceTest {
             await("Three context items prepared at the requested position") {
                 ui.state.value.queue.size == 3 && observer.playbackState == Player.STATE_READY && observer.currentPosition == 4200L
             }
+            main { ui.playFromBrowse(listOf(tracks[1]), 0) }
+            instrumentation.waitForIdleSync()
+            await("Opening the current song keeps its paused position and its existing queue") {
+                !observer.playWhenReady && observer.currentPosition == 4200L && observer.mediaItemCount == 3
+            }
             main { ui.shuffle() }
             await("Shuffle reaches the session") { ui.state.value.shuffle && observer.shuffleModeEnabled }
             main {
@@ -88,13 +101,14 @@ class QueuePlaybackDeviceTest {
                 ui.repeat()
             }
             await("Repeat OFF cycles to ALL") { ui.state.value.repeat == Player.REPEAT_MODE_ALL && observer.repeatMode == Player.REPEAT_MODE_ALL }
+            val addResult = AtomicReference<Boolean?>(null)
             main {
                 assertEquals(2, ui.state.value.upcomingIndices.distinct().size)
                 assertEquals(observer.nextMediaItemIndex, ui.state.value.nextIndex)
-                ui.enqueue(tracks[3], next = true)
+                ui.enqueue(tracks[3], next = true) { addResult.set(it) }
             }
             await("Play Next goes immediately after current in shuffle order") {
-                ui.state.value.nextItem?.mediaId == tracks[3].uri && observer.mediaItemCount == 4
+                addResult.get() == true && ui.state.value.nextItem?.mediaId == tracks[3].uri && observer.mediaItemCount == 4
             }
             main { ui.enqueue(tracks[4], next = false) }
             await("Append goes at the end of shuffle order") {
@@ -188,6 +202,12 @@ class QueuePlaybackDeviceTest {
                 state.queue.size == 1 && state.canRepeat && !state.canShuffle && state.previousIndex == null && state.nextIndex == null
             }
         } finally {
+            runBlocking {
+                app.library.dao.playlists().first().filter { it.name == playlistName }.forEach {
+                    app.library.dao.clearPlaylist(it.id)
+                    app.library.dao.deletePlaylist(it.id)
+                }
+            }
             main {
                 observer.pause()
                 if (originalTracks.isEmpty()) observer.clearMediaItems()

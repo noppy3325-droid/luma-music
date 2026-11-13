@@ -23,12 +23,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Velocity
@@ -126,6 +129,7 @@ internal fun LibraryScreen(
     onCloseDetail: () -> Unit = {},
 ) {
     val scan by vm.scan.collectAsStateWithLifecycle()
+    val playback by vm.playbackSummary.collectAsStateWithLifecycle()
     val isPlaylists = section == "playlists"
     var category by rememberSaveable { mutableStateOf(initialDetail?.category ?: if (isPlaylists) LibraryCategory.Playlists else LibraryCategory.Songs) }
     var detailKey by rememberSaveable { mutableStateOf(initialDetail?.key) }
@@ -299,11 +303,11 @@ internal fun LibraryScreen(
                     if (detailKey != null && visible.isNotEmpty()) item("group_controls") {
                         if (category == LibraryCategory.Albums) AlbumHeader(visible, favorites, vm)
                         Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            FilledTonalButton({ vm.playback.play(visible); openPlayer() }, Modifier.weight(1f)) {
+                            FilledTonalButton({ vm.playGroup(visible, shuffle = null, openPlayer) }, Modifier.weight(1f)) {
                                 Icon(Icons.Rounded.PlayArrow, null)
                                 Text("再生")
                             }
-                            FilledTonalButton({ vm.playback.play(visible, shuffle = true); openPlayer() }, Modifier.weight(1f)) {
+                            FilledTonalButton({ vm.playGroup(visible, shuffle = true, openPlayer) }, Modifier.weight(1f)) {
                                 Icon(Icons.Rounded.Shuffle, null)
                                 Text("シャッフル", maxLines = 1)
                             }
@@ -351,7 +355,8 @@ internal fun LibraryScreen(
                         key = { index, track -> playlistEntries.getOrNull(index)?.entryId ?: track.uri },
                         contentType = { _, _ -> "track" },
                     ) { index, track ->
-                        TrackRow(track, track.uri in favorites, { vm.playback.play(visible, index); openPlayer() }, { vm.favorite(track.uri) }, vm, playlists)
+                        TrackRow(track, track.uri in favorites, { vm.browseTrack(visible, index, openPlayer) },
+                            { vm.favorite(track.uri) }, vm, playlists, current = track.uri == playback.mediaId, playing = playback.playing)
                         if (playlistId != null) {
                             fun move(from: Int, to: Int) {
                                 val revised = playlistEntries.toMutableList()
@@ -490,19 +495,31 @@ internal fun TrackRow(
     onFavorite: () -> Unit,
     vm: LumaViewModel,
     playlists: List<MusicPlaylist>,
+    current: Boolean = false,
+    playing: Boolean = false,
 ) {
     LaunchedEffect(track.uri, track.modified, track.size, track.detailState) { vm.ensureDetails(track.uri) }
     var menu by remember { mutableStateOf(false) }
     var addTo by remember { mutableStateOf(false) }
+    var creatingPlaylist by rememberSaveable { mutableStateOf(false) }
+    var newPlaylist by rememberSaveable { mutableStateOf("") }
     Row(
         Modifier.fillMaxWidth().clip(LumaShapes.Artwork).clickable(onClick = onClick)
+            .semantics { if (current) stateDescription = if (playing) "再生中" else "現在の曲" }
             .padding(vertical = 8.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Artwork(track.artworkThumbnail ?: track.artwork, track.album, Modifier.size(54.dp), 12)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            TrackText(track.title)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (current) {
+                    Icon(if (playing) Icons.Rounded.Equalizer else Icons.Rounded.Pause, null,
+                        modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(6.dp))
+                }
+                TrackText(track.title, modifier = Modifier.weight(1f), color = if (current) MaterialTheme.colorScheme.primary else Color.Unspecified)
+            }
             TrackText(track.artist, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (favorite) Icon(Icons.Rounded.Favorite, "お気に入り", tint = Rose, modifier = Modifier.size(14.dp))
@@ -514,11 +531,11 @@ internal fun TrackRow(
                     menu = false
                 })
                 DropdownMenuItem({ Text("次に再生") }, {
-                    vm.playback.enqueue(track, true)
+                    vm.enqueue(track, true)
                     menu = false
                 })
                 DropdownMenuItem({ Text("キューの最後に追加") }, {
-                    vm.playback.enqueue(track, false)
+                    vm.enqueue(track, false)
                     menu = false
                 })
                 DropdownMenuItem({ Text("プレイリストに追加") }, {
@@ -533,16 +550,32 @@ internal fun TrackRow(
         title = { Text("プレイリストに追加") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                if (playlists.isEmpty()) Text("プレイリストタブでプレイリストを作成してください")
+                TextButton({ addTo = false; creatingPlaylist = true }) {
+                    Icon(Icons.Rounded.Add, null)
+                    Text("新しいプレイリスト")
+                }
                 playlists.forEach { list ->
                     TextButton({
-                        vm.action { vm.library.addToPlaylist(list.id, track.uri) }
+                        vm.addToPlaylist(track, list)
                         addTo = false
                     }) { TrackText(list.name) }
                 }
             }
         },
         confirmButton = { TextButton({ addTo = false }) { Text("閉じる") } },
+    )
+    if (creatingPlaylist) AlertDialog(
+        onDismissRequest = { creatingPlaylist = false; newPlaylist = "" },
+        title = { Text("新しいプレイリスト") },
+        text = { OutlinedTextField(newPlaylist, { newPlaylist = it }, label = { Text("名前") }, singleLine = true) },
+        confirmButton = {
+            TextButton({
+                vm.createPlaylistWithTrack(newPlaylist, track)
+                creatingPlaylist = false
+                newPlaylist = ""
+            }, enabled = newPlaylist.isNotBlank()) { Text("作成して追加") }
+        },
+        dismissButton = { TextButton({ creatingPlaylist = false; newPlaylist = "" }) { Text("キャンセル") } },
     )
 }
 

@@ -73,6 +73,7 @@ internal fun SearchScreen(
     var detailName by rememberSaveable { mutableStateOf("") }
     val index by vm.searchIndex.collectAsStateWithLifecycle()
     val scan by vm.scan.collectAsStateWithLifecycle()
+    val playback by vm.playbackSummary.collectAsStateWithLifecycle()
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val requester = remember { FocusRequester() }
@@ -84,8 +85,8 @@ internal fun SearchScreen(
         if (query.isNotBlank()) delay(110)
         searchQuery = query
     }
-    val results by produceState<SearchResults?>(null, index, searchQuery) {
-        value = if (searchQuery.isBlank()) null else withContext(Dispatchers.Default) { index?.search(searchQuery) }
+    val results by produceState<Pair<String, SearchResults?>?>(null, index, searchQuery) {
+        value = searchQuery to if (searchQuery.isBlank()) null else withContext(Dispatchers.Default) { index?.search(searchQuery) }
     }
 
     fun finishEditing() {
@@ -118,17 +119,17 @@ internal fun SearchScreen(
         if (!active && focused) finishEditing()
     }
     var previousQuery by rememberSaveable { mutableStateOf(searchQuery) }
-    LaunchedEffect(results, searchQuery) {
-        if (results != null && previousQuery != searchQuery) {
+    LaunchedEffect(results, query) {
+        if (results?.first == query && results?.second != null && previousQuery != query) {
             listState.scrollToItem(0)
-            previousQuery = searchQuery
+            previousQuery = query
         }
     }
     val scope = rememberCoroutineScope()
     Column(Modifier.fillMaxSize()) {
         PageHeading("検索")
         SearchField(query, { query = it }, requester, { focused = it }, ::finishEditing)
-        val found = results.takeUnless { query.isBlank() }
+        val found = results?.takeIf { it.first == query && query.isNotBlank() }?.second
         if (found != null && !found.isEmpty) {
             ChoiceChips(SearchKind.entries.map(SearchKind::label), filter.label) { label ->
                 filter = SearchKind.entries.first { it.label == label }
@@ -191,10 +192,10 @@ internal fun SearchScreen(
                         track, track.uri in favorites,
                         {
                             finishEditing()
-                            vm.playback.play(found.tracks, position)
-                            openPlayer()
+                            vm.browseTrack(found.tracks, position, openPlayer)
                         },
                         { vm.favorite(track.uri) }, vm, playlists,
+                        current = track.uri == playback.mediaId, playing = playback.playing,
                     )
                 }
             }

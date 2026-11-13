@@ -10,6 +10,7 @@ import jp.noppy.lumamusic.data.*
 import jp.noppy.lumamusic.playback.PlaybackController
 import jp.noppy.lumamusic.playback.PlaybackUi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -34,6 +35,8 @@ class LumaViewModel(application: Application) : AndroidViewModel(application) {
     private val mutableMessage = MutableStateFlow<String?>(null)
     private var lastScan = 0L
     val message = mutableMessage.asStateFlow()
+    private val feedbackEvents = Channel<String>(Channel.CONFLATED)
+    val feedback = feedbackEvents.receiveAsFlow()
     init {
         rescan(false)
         viewModelScope.launch {
@@ -49,6 +52,31 @@ class LumaViewModel(application: Application) : AndroidViewModel(application) {
     fun rescan(force: Boolean = true) { lastScan = android.os.SystemClock.elapsedRealtime(); action { library.rescan(force) } }
     fun refreshIfStale() { if (!scan.value.running && android.os.SystemClock.elapsedRealtime() - lastScan > 60000) rescan(false) }
     fun favorite(uri: String) { action { library.toggleFavorite(uri) } }
+    fun browseTrack(tracks: List<Track>, index: Int, openPlayer: () -> Unit) {
+        if (playback.playFromBrowse(tracks, index)) openPlayer()
+        else feedbackEvents.trySend("再生できません。接続後にもう一度お試しください")
+    }
+    fun playGroup(tracks: List<Track>, shuffle: Boolean?, openPlayer: () -> Unit) {
+        if (playback.play(tracks, shuffle = shuffle)) openPlayer()
+        else feedbackEvents.trySend("再生できません。接続後にもう一度お試しください")
+    }
+    fun enqueue(track: Track, next: Boolean) {
+        playback.enqueue(track, next) { added ->
+            feedbackEvents.trySend(when {
+                !added -> "キューに追加できませんでした"
+                next -> "次に再生します"
+                else -> "キューの最後に追加しました"
+            })
+        }
+    }
+    fun addToPlaylist(track: Track, playlist: MusicPlaylist) = action {
+        library.addToPlaylist(playlist.id, track.uri)
+        feedbackEvents.trySend("「${playlist.name}」に追加しました")
+    }
+    fun createPlaylistWithTrack(name: String, track: Track) = action {
+        library.createPlaylistWithTrack(name, track.uri)
+        feedbackEvents.trySend("「${name.trim()}」を作成して曲を追加しました")
+    }
     suspend fun ensureDetails(uri: String) { library.ensureDetails(uri) }
     fun mode(mode: OutputMode) { action { settings.mode(mode) } }
     override fun onCleared() { playback.close(); super.onCleared() }

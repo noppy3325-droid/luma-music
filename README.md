@@ -1,48 +1,50 @@
+<div align="center">
+
+<img src="docs/design/aurio-icon.svg" width="112" alt="Aurio アイコン">
+
 # Aurio
 
-Android 10以降で動作するオフライン音楽プレイヤー。Kotlin / Jetpack Compose / Media3を使用します。アプリIDは `jp.noppy.lumamusic` です。
+**好きな音楽を、自分のペースで。**
 
-[v0.21のAPKをダウンロード](https://github.com/noppy3325-droid/luma-music/releases/download/v0.21/Aurio-0.21.apk)してインストールしてください。既存版と同じ開発用署名を使用し、Roomの追加マイグレーションで登録フォルダー・お気に入り・歌詞・プレイリストを保持します。
+端末にある音楽を、美しく、軽やかに楽しむオフラインプレイヤー。
 
-## v0.21
+[APKをダウンロード](https://github.com/noppy3325-droid/luma-music/releases) · [使い始める](#使い始める) · [ビルド](#開発する)
 
-- ミニプレイヤーを左にスワイプすると次の曲へ、右にスワイプすると前の曲へ移ります。上に引くとNow Playingが開きます。
-- Now Playingにシャッフルとリピートのボタンを表示し、キューにMedia3が次に再生する順番を表示します。
-- アートワークから曲情報へのグラデーションと操作間隔を調整し、ライブラリの末尾をボトムメニューより上までスクロールできるようにしました。
+Android 10+　 ·　 オフライン再生　 ·　 オープンソース
 
-## v0.20
+</div>
 
-- ミニプレイヤーを上にドラッグすると全面アートワークの再生画面が開き、上部を下へ引くと元の画面に戻ります。再生とキューは開閉中も維持します。
-- ライブラリ、専用検索、プレイリストはタップでも横スワイプでも切り替えられます。選択ガラスはページに追従し、Backdrop 2.0.1で背景をサンプリングします。
-- 曲名とアーティスト名を1行で省略表示します。Noto Sans JPの固定ウェイトと、Aurioの新しいアダプティブアイコンを採用しました。
-- SAFの発見・タグ・画像/歌詞処理を分離。16曲単位の逐次表示、2並列のタグ取得、サイズ/更新日時による差分読み込み、表示中/再生中の曲だけ詳細を取得します。
-- Aurio Direct / Enhance。実働する10バンドEQ、プリセット保存、ヘッドルーム、音量均一化、控えめな測定ベースのAuto補正、ステレオ幅調整を搭載しています。
-- MediaSession、バックグラウンド再生、標準メディア通知、キュー、LRC/手動歌詞、複数フォルダーに対応。元の音楽ファイルを移動・削除・変換しません。
+## 音楽に集中できる場所
 
-初回は音楽フォルダーを選択します。設定はライブラリ右上、サウンド設定は再生画面の下部から開けます。音声解析はユーザーが実行した場合だけ端末内で行い、通常のスキャンには含めません。
+| ライブラリ | 再生画面 |
+|:---:|:---:|
+| <img src="docs/screenshots/v021/after/01-library-light.png" width="320" alt="楽曲ライブラリ"> | <img src="docs/screenshots/v021/after/04-player-light.png" width="320" alt="アートワークを大きく表示した再生画面"> |
 
-## 音声表示と制約
+*画面の楽曲名とアートワークはテスト用に生成したものです。*
 
-DirectはAurio自身のPCM加工をバイパスします。この版はMedia3の共通PCM16経路を使用するため、24bit/float音源は上流で16bitへ変換されます。Directと、DACまでのビットパーフェクト実証は別の状態です。
+- **自分の音楽を整理** — フォルダーを選ぶだけで、楽曲・アルバム・アーティストを閲覧。検索、お気に入り、プレイリストにも対応。
+- **自然な操作** — ミニプレイヤーを左右にスワイプして曲送り、上に引いて再生画面へ。キューの確認や編集もできます。
+- **自分好みのサウンド** — 10バンドEQ、プリセット、音量均一化、ステレオ幅を調整。加工をバイパスするDirectモードも選べます。
+- **いつもの聴き方に対応** — 歌詞、シャッフル、リピート、バックグラウンド再生、通知操作、USBオーディオやBluetooth出力に対応。
 
-USB DAC / USB-C EarPods / BluetoothはAndroid標準の経路を利用します。API34以上ではOSが実際に報告するミキサー形式を照合し、条件を満たす場合だけ希望設定を試みます。取得できない機器仕様や実出力は「未確認」と表示し、ビットパーフェクトを断定しません。独自USBドライバーは含みません。
+## 使い始める
 
-音量解析は推定LUFS・サンプルピークです。認証済みメーター、true-peakリミッター、AIによる復元ではありません。アルバム音量は全曲の有効な解析キャッシュがある場合の推定です。詳細は [DSP設計](docs/audio-dsp-v020.md)、[スキャン設計](docs/library-scan-design.md)、[ガラス描画](docs/liquid-glass-design.md) を参照してください。
+1. [リリースページ](https://github.com/noppy3325-droid/luma-music/releases)から最新のAPKをダウンロードし、Android端末にインストールします。
+2. アプリを開き、音楽が入ったフォルダーを選びます。
+3. ライブラリから曲を選んで再生します。右上の設定からフォルダーを追加できます。
 
-Xiaomi 14T（Android16）での測定・テストと、EarPodsを含む未検証項目は [v0.20検証記録](docs/VERIFICATION-v0.20.md) に記録します。物理ボタン、USB DACのクロック、長時間再生、全コーデック、HyperIsland固有の拡張表示を検証済みとは表示しません。
+既存版と同じ署名のAPKは上書きインストールできます。リリースは開発用の署名鍵で署名されています。
 
-## ビルド
+## 開発する
 
-Android SDK Platform37.0 / Build Tools36.0.0、JDK17以上（検証環境JBR25）、同梱のGradle Wrapperを使用します。SDKの場所は未追跡の `local.properties` で指定してください。
+Kotlin、Jetpack Compose、Media3で構築しています。JDK 17以上、Android SDK Platform 37、Build Tools 36.0.0が必要です。SDKの場所は local.properties に設定してください。
 
-```powershell
-$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
-$env:GRADLE_USER_HOME = Join-Path (Get-Location) '.gradle-home'
-.\gradlew.bat :core:test :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
-.\gradlew.bat :app:assembleDebugAndroidTest :app:assembleRelease
-```
+    ./gradlew :core:test :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
 
-`assembleRelease` は未署名APKを生成します。配布には署名が必要です。秘密鍵はリポジトリに含めません。今回の配布APKは従来と同じ開発用鍵で署名した、デバッグ不可のreleaseビルドです。
+Windowsでは gradlew.bat を使ってください。assembleRelease は署名前のAPKを生成します。
 
-実機テストはテストAPKを `adb install -r -t` で導入し、`adb shell am instrument -w jp.noppy.lumamusic.test/androidx.test.runner.AndroidJUnitRunner` で実行します。合成の無音PCMと生成画像を使用し、音量設定は変更しません。詳細な [実機手順](docs/DEVICE_TESTS.md) と [依存ライブラリの表記](THIRD_PARTY_NOTICES.md) も参照してください。
-旧名はLuma Musicです。既存データの互換性のためアプリIDと内部データ名は保持しています。表示はAurioに統一し、日本語・英字とも同梱のNoto Sans JPを使用します。
+音声処理と対応状況は[音声設計](docs/audio-dsp-v020.md)、依存関係とライセンスは[サードパーティ表記](THIRD_PARTY_NOTICES.md)をご覧ください。24bit/float音源は現在の共通再生経路でPCM16に変換されます。出力機器の仕様やビットパーフェクト再生は、確認できた情報だけを表示します。
+
+## ライセンス
+
+Aurioのソースコードは [MIT License](LICENSE) で公開しています。組み込まれたフォントやライブラリには、それぞれのライセンスが適用されます。

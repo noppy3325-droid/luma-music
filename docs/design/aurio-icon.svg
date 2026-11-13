@@ -1,14 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
-  <title>Aurio</title>
-  <desc>A warm white A with an audio waveform through its center on a plum background.</desc>
-  <defs>
-    <radialGradient id="background" gradientUnits="userSpaceOnUse" cx="40" cy="20" r="85">
-      <stop offset="0" stop-color="#AA455B"/>
-      <stop offset=".55" stop-color="#632C47"/>
-      <stop offset="1" stop-color="#281C33"/>
-    </radialGradient>
-  </defs>
-  <path fill="url(#background)" d="M0,0H108V108H0Z"/>
-  <path fill="none" stroke="#FFF3E6" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"
-        d="M34,74 L49,36 C51,31 57,31 59,36 L74,74 M39,61 H45 C49,61 50,65 54,65 C60,65 60,53 67,53 H71"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108">
+  <defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#536d9d"/><stop offset=".48" stop-color="#343d69"/><stop offset="1" stop-color="#171b36"/></linearGradient></defs>
+  <rect width="108" height="108" rx="24" fill="url(#bg)"/>
+  <g fill="none" stroke="#f9f7ff" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M32 68C32 51 41 37 54 32c13 5 22 19 22 36" stroke-width="7"/>
+    <path d="M36 67c7 0 9-8 15-8s7 8 13 8c5 0 7-5 9-6" stroke-width="5.5"/>
+  </g>
 </svg>

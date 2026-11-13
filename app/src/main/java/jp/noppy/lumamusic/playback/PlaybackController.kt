@@ -46,7 +46,6 @@ class PlaybackController(context: Context, scope: CoroutineScope) {
     private val mainExecutor = ContextCompat.getMainExecutor(context)
     private var controller: MediaController? = null
     private var closed = false
-    private var queueError: String? = null
     private val future = MediaController.Builder(context, SessionToken(context, ComponentName(context, PlaybackService::class.java))).buildAsync()
     private val listener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
@@ -111,7 +110,7 @@ class PlaybackController(context: Context, scope: CoroutineScope) {
             index = index,
             repeat = repeat,
             shuffle = shuffle,
-            error = player.playerError?.localizedMessage ?: queueError,
+            error = player.playerError?.localizedMessage,
             previousIndex = previousIndex,
             nextIndex = nextIndex,
             previousItem = previousIndex?.let(queue::get),
@@ -124,14 +123,23 @@ class PlaybackController(context: Context, scope: CoroutineScope) {
 
     private fun connectedPlayer(): MediaController? = controller?.takeIf { it.isConnected }
 
-    fun play(tracks: List<Track>, index: Int = 0, shuffle: Boolean? = null) {
-        val player = connectedPlayer() ?: return
-        if (tracks.isEmpty() || !player.isCommandAvailable(Player.COMMAND_CHANGE_MEDIA_ITEMS)) return
-        queueError = null
+    /** Reopening the current item from browsing is independent of the visible list's order. */
+    fun playFromBrowse(tracks: List<Track>, index: Int): Boolean {
+        val target = tracks.getOrNull(index) ?: return false
+        val player = connectedPlayer() ?: return false
+        if (player.currentMediaItem?.mediaId == target.uri && player.playbackState != Player.STATE_ENDED && player.playerError == null) return true
+        return play(tracks, index)
+    }
+
+    fun play(tracks: List<Track>, index: Int = 0, shuffle: Boolean? = null): Boolean {
+        val player = connectedPlayer() ?: return false
+        if (tracks.isEmpty() || !player.isCommandAvailable(Player.COMMAND_CHANGE_MEDIA_ITEMS) ||
+            !player.isCommandAvailable(Player.COMMAND_PLAY_PAUSE) || !player.isCommandAvailable(Player.COMMAND_PREPARE)) return false
         player.setMediaItems(tracks.map(Track::mediaItem), index.coerceIn(tracks.indices), 0)
         if (shuffle != null && player.isCommandAvailable(Player.COMMAND_SET_SHUFFLE_MODE)) player.shuffleModeEnabled = shuffle
         player.prepare()
         player.play()
+        return true
     }
 
     fun toggle() {
@@ -164,7 +172,6 @@ class PlaybackController(context: Context, scope: CoroutineScope) {
             // transit, a relative command could jump one additional song.
             return skip(target, expectedItem)
         }
-        queueError = null
         if (forward) player.seekToNextMediaItem() else player.seekToPreviousMediaItem()
         prepareIfIdle(player)
         return true
@@ -179,7 +186,6 @@ class PlaybackController(context: Context, scope: CoroutineScope) {
         val player = connectedPlayer() ?: return false
         if (!player.isCommandAvailable(Player.COMMAND_SEEK_TO_MEDIA_ITEM) || index !in 0 until player.mediaItemCount) return false
         if (expected != null && expected != player.getMediaItemAt(index)) return false
-        queueError = null
         player.seekToDefaultPosition(index)
         prepareIfIdle(player)
         return true
@@ -203,9 +209,12 @@ class PlaybackController(context: Context, scope: CoroutineScope) {
         }
     }
 
-    fun enqueue(track: Track, next: Boolean) {
-        val player = connectedPlayer() ?: return
-        if (!player.availableSessionCommands.contains(addQueueItemCommand)) return
+    fun enqueue(track: Track, next: Boolean, onComplete: (Boolean) -> Unit = {}) {
+        val player = connectedPlayer()
+        if (player == null || !player.availableSessionCommands.contains(addQueueItemCommand)) {
+            onComplete(false)
+            return
+        }
         val arguments = Bundle().apply {
             putString(QUEUE_ITEM_URI, track.uri)
             putBoolean(QUEUE_PLAY_NEXT, next)
@@ -213,9 +222,7 @@ class PlaybackController(context: Context, scope: CoroutineScope) {
         val request = player.sendCustomCommand(addQueueItemCommand, arguments)
         request.addListener({
             if (!closed) {
-                queueError = if (runCatching { request.get().resultCode }.getOrNull() == SessionResult.RESULT_SUCCESS) null
-                else "曲をキューに追加できませんでした。音楽フォルダーのアクセス権を確認してください"
-                update()
+                onComplete(runCatching { request.get().resultCode }.getOrNull() == SessionResult.RESULT_SUCCESS)
             }
         }, mainExecutor)
     }

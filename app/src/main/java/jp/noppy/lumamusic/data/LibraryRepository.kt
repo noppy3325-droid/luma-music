@@ -327,5 +327,11 @@ class LibraryRepository(private val context: Context, private val db: LibraryDat
     }
     suspend fun createPlaylist(name: String) { if (name.isNotBlank()) dao.playlist(MusicPlaylist(name = name.trim())) }
     suspend fun addToPlaylist(id: Long, uri: String) = db.withTransaction { dao.entries(listOf(PlaylistEntry(id, UUID.randomUUID().toString(), uri, dao.nextPosition(id)))) }
+    suspend fun createPlaylistWithTrack(name: String, uri: String) = db.withTransaction {
+        val title = name.trim()
+        require(title.isNotEmpty())
+        val id = dao.playlist(MusicPlaylist(name = title))
+        dao.entries(listOf(PlaylistEntry(id, UUID.randomUUID().toString(), uri, 0)))
+    }
     suspend fun savePlaylistEntries(id: Long, entries: List<PlaylistEntry>) = db.withTransaction { dao.clearPlaylist(id); dao.entries(entries.mapIndexed { i, entry -> entry.copy(position = i) }) }
 }

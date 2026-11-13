@@ -47,6 +47,7 @@ import jp.noppy.lumamusic.playback.PlaybackUi
 import jp.noppy.lumamusic.ui.audio.SoundSettingsScreen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -75,6 +76,11 @@ import java.time.format.DateTimeFormatter
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showSound by rememberSaveable { mutableStateOf(false) }
     var showOutput by remember { mutableStateOf(false) }
+    var dockHeightPx by remember { mutableIntStateOf(0) }
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(vm) {
+        vm.feedback.collectLatest { snackbar.showSnackbar(it, duration = SnackbarDuration.Short) }
+    }
     val tabState = rememberSaveableStateHolder()
     val navigationScope = rememberCoroutineScope()
     var tabChange by remember { mutableStateOf<Job?>(null) }
@@ -135,7 +141,6 @@ import java.time.format.DateTimeFormatter
                         SettingsScreen(vm, prefs, folders, { picker.launch(null) }, { showOutput = true }, openSound, { showSettings = false })
                     }
                     else -> {
-                        var dockHeightPx by remember { mutableIntStateOf(0) }
                         val bottomContentPadding = with(LocalDensity.current) { dockHeightPx.toDp() } + LumaDock.ListClearance
                         val backgroundSemantics = if (playerVisible) Modifier.semantics { hideFromAccessibility() } else Modifier
                         LiquidBackdropHost(Modifier.fillMaxSize().imePadding().then(backgroundSemantics), content = {
@@ -195,6 +200,13 @@ import java.time.format.DateTimeFormatter
                         }
                     }
                 }
+                val browsing = !showSound && !showSettings && !standby.active && !playerVisible
+                val feedbackPosition = Modifier.align(Alignment.BottomCenter).imePadding()
+                SnackbarHost(
+                    snackbar,
+                    if (browsing) feedbackPosition.padding(bottom = with(LocalDensity.current) { dockHeightPx.toDp() })
+                    else feedbackPosition.navigationBarsPadding().padding(bottom = 12.dp),
+                )
                 if (showOutput) OutputPanel(output, selected, playback.playing) { showOutput = false }
                 val error = message ?: playback.error ?: scan.message.takeIf { !scan.running }
                 if (error != null) {
